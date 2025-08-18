@@ -2,425 +2,411 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./SkillToken.sol";
-import "./SkillFiEscrow.sol";
 
 /**
  * @title SkillFiInsurance
- * @dev Decentralized insurance system for project protection
+ * @dev Insurance pool for protecting clients and freelancers against project failures
  */
-contract SkillFiInsurance is ReentrancyGuard, Ownable {
+contract SkillFiInsurance is ReentrancyGuard, Pausable, Ownable {
     using SafeERC20 for IERC20;
     
     SkillToken public immutable skillToken;
-    SkillFiEscrow public immutable escrow;
-    
-    enum InsuranceType {
-        ProjectCompletion,  // Protects against non-completion
-        QualityAssurance,   // Protects against poor quality work
-        TimelineProtection, // Protects against delays
-        PaymentProtection   // Protects freelancers against non-payment
-    }
     
     enum ClaimStatus {
-        None,
-        Submitted,
-        UnderReview,
-        Approved,
-        Rejected,
-        Paid
+        Pending,     // 0 - Claim submitted, under review
+        Approved,    // 1 - Claim approved, payout pending
+        Rejected,    // 2 - Claim rejected
+        Paid,        // 3 - Claim paid out
+        Disputed     // 4 - Claim disputed, needs resolution
+    }
+    
+    enum InsuranceType {
+        ProjectCompletion,  // 0 - Protects client if freelancer doesn't deliver
+        PaymentProtection,  // 1 - Protects freelancer if client doesn't pay
+        QualityAssurance,   // 2 - Protects against poor quality work
+        TimelineProtection  // 3 - Protects against missed deadlines
     }
     
     struct InsurancePolicy {
-        InsuranceType policyType;
-        uint256 premiumRate; // basis points (100 = 1%)
-        uint256 coverageLimit; // maximum payout
-        uint256 deductible;
-        bool isActive;
-        uint256 totalPremiums;
-        uint256 totalClaims;
-    }
-    
-    struct UserPolicy {
-        uint256 policyId;
+        uint256 id;
         uint256 projectId;
         address policyholder;
+        InsuranceType insuranceType;
         uint256 coverageAmount;
-        uint256 premiumPaid;
-        uint256 purchaseTime;
-        uint256 expiryTime;
+        uint256 premium;
+        uint256 deductible;
+        uint256 startTime;
+        uint256 endTime;
         bool isActive;
+        bool hasClaimed;
     }
     
     struct InsuranceClaim {
-        uint256 userPolicyId;
+        uint256 id;
+        uint256 policyId;
         address claimant;
+        ClaimStatus status;
         uint256 claimAmount;
         string evidence;
-        ClaimStatus status;
-        uint256 submissionTime;
-        uint256 reviewDeadline;
-        address[] reviewers;
-        mapping(address => bool) reviewerVotes;
-        uint256 approvalVotes;
-        uint256 rejectionVotes;
+        string reason;
+        uint256 submittedAt;
+        uint256 reviewedAt;
+        address reviewer;
+        string reviewNotes;
     }
     
     struct InsurancePool {
         uint256 totalFunds;
-        uint256 availableFunds;
-        uint256 reserveRatio; // basis points (2000 = 20%)
-        uint256 minReserve;
+        uint256 totalClaims;
+        uint256 totalPremiums;
+        uint256 reserveRatio; // Percentage of funds to keep in reserve
+        uint256 maxCoveragePerPolicy;
+        uint256 maxTotalCoverage;
     }
     
-    // Storage
     mapping(uint256 => InsurancePolicy) public policies;
-    mapping(uint256 => UserPolicy) public userPolicies;
     mapping(uint256 => InsuranceClaim) public claims;
-    mapping(address => uint256[]) public userPolicyIds;
+    mapping(address => uint256[]) public userPolicies;
+    mapping(address => uint256[]) public userClaims;
     mapping(uint256 => uint256[]) public projectPolicies; // projectId => policyIds
     
     InsurancePool public insurancePool;
     
     uint256 public policyCounter;
-    uint256 public userPolicyCounter;
     uint256 public claimCounter;
     
-    uint256 public constant REVIEW_PERIOD = 7 days;
-    uint256 public constant MIN_REVIEWERS = 3;
-    uint256 public constant REVIEWER_REWARD = 50 * 10**18; // 50 SKILL per review
+    // Premium rates (basis points) for different insurance types
+    mapping(InsuranceType => uint256) public premiumRates;
     
-    address[] public authorizedReviewers;
-    mapping(address => bool) public isAuthorizedReviewer;
+    // Authorized reviewers for claims
+    mapping(address => bool) public authorizedReviewers;
     
-    // Events
-    event PolicyCreated(uint256 indexed policyId, InsuranceType policyType);
-    event PolicyPurchased(
-        uint256 indexed userPolicyId,
-        address indexed user,
+    // Risk assessment factors
+    mapping(address => uint256) public userRiskScores; // 0-1000, lower is better
+    mapping(string => uint256) public skillRiskScores; // skill => risk score
+    
+    uint256 public constant MAX_RISK_SCORE = 1000;
+    uint256 public constant BASE_PREMIUM_RATE = 500; // 5%
+    uint256 public constant MAX_COVERAGE_RATIO = 8000; // 80% of project value
+    uint256 public constant RESERVE_RATIO = 2000; // 20% reserve
+    
+    event PolicyCreated(
+        uint256 indexed policyId,
         uint256 indexed projectId,
-        uint256 coverageAmount
+        address indexed policyholder,
+        InsuranceType insuranceType,
+        uint256 coverageAmount,
+        uint256 premium
     );
+    
     event ClaimSubmitted(
         uint256 indexed claimId,
-        uint256 indexed userPolicyId,
+        uint256 indexed policyId,
+        address indexed claimant,
+        uint256 claimAmount,
+        string reason
+    );
+    
+    event ClaimReviewed(
+        uint256 indexed claimId,
+        ClaimStatus status,
+        address indexed reviewer,
+        string notes
+    );
+    
+    event ClaimPaid(
+        uint256 indexed claimId,
         address indexed claimant,
         uint256 amount
     );
-    event ClaimReviewed(
-        uint256 indexed claimId,
-        address indexed reviewer,
-        bool approved
-    );
-    event ClaimResolved(
-        uint256 indexed claimId,
-        ClaimStatus status,
-        uint256 payoutAmount
-    );
-    event FundsDeposited(address indexed depositor, uint256 amount);
-    event ReviewerAdded(address indexed reviewer);
     
-    modifier onlyAuthorizedReviewer() {
-        require(isAuthorizedReviewer[msg.sender], "Not authorized reviewer");
+    event PremiumPaid(
+        uint256 indexed policyId,
+        address indexed policyholder,
+        uint256 amount
+    );
+    
+    event PoolFunded(address indexed funder, uint256 amount);
+    
+    modifier onlyReviewer() {
+        require(authorizedReviewers[msg.sender] || msg.sender == owner(), "Not authorized reviewer");
         _;
     }
     
-    modifier onlyEscrow() {
-        require(msg.sender == address(escrow), "Only escrow can call");
+    modifier validPolicy(uint256 policyId) {
+        require(policies[policyId].id != 0, "Policy does not exist");
         _;
     }
     
-    constructor(
-        address _skillToken,
-        address _escrow
-    ) {
+    modifier validClaim(uint256 claimId) {
+        require(claims[claimId].id != 0, "Claim does not exist");
+        _;
+    }
+    
+    constructor(address _skillToken) {
         skillToken = SkillToken(_skillToken);
-        escrow = SkillFiEscrow(_escrow);
+        
+        // Initialize premium rates (basis points)
+        premiumRates[InsuranceType.ProjectCompletion] = 300; // 3%
+        premiumRates[InsuranceType.PaymentProtection] = 200; // 2%
+        premiumRates[InsuranceType.QualityAssurance] = 400; // 4%
+        premiumRates[InsuranceType.TimelineProtection] = 250; // 2.5%
         
         // Initialize insurance pool
-        insurancePool = InsurancePool({
-            totalFunds: 0,
-            availableFunds: 0,
-            reserveRatio: 2000, // 20%
-            minReserve: 100000 * 10**18 // 100,000 SKILL minimum reserve
-        });
-        
-        _initializePolicies();
+        insurancePool.reserveRatio = RESERVE_RATIO;
+        insurancePool.maxCoveragePerPolicy = 100000 * 10**18; // 100k SKILL
+        insurancePool.maxTotalCoverage = 10000000 * 10**18; // 10M SKILL
     }
     
     /**
-     * @dev Initialize default insurance policies
+     * @dev Create insurance policy for a project
      */
-    function _initializePolicies() internal {
-        // Project Completion Insurance
-        _createPolicy(
-            InsuranceType.ProjectCompletion,
-            500, // 5% premium
-            50000 * 10**18, // 50,000 SKILL max coverage
-            1000 * 10**18 // 1,000 SKILL deductible
-        );
-        
-        // Quality Assurance Insurance
-        _createPolicy(
-            InsuranceType.QualityAssurance,
-            300, // 3% premium
-            25000 * 10**18, // 25,000 SKILL max coverage
-            500 * 10**18 // 500 SKILL deductible
-        );
-        
-        // Timeline Protection Insurance
-        _createPolicy(
-            InsuranceType.TimelineProtection,
-            200, // 2% premium
-            15000 * 10**18, // 15,000 SKILL max coverage
-            250 * 10**18 // 250 SKILL deductible
-        );
-        
-        // Payment Protection Insurance
-        _createPolicy(
-            InsuranceType.PaymentProtection,
-            150, // 1.5% premium
-            100000 * 10**18, // 100,000 SKILL max coverage
-            0 // No deductible for payment protection
-        );
-    }
-    
-    /**
-     * @dev Create new insurance policy
-     */
-    function _createPolicy(
-        InsuranceType _type,
-        uint256 _premiumRate,
-        uint256 _coverageLimit,
-        uint256 _deductible
-    ) internal {
-        policyCounter++;
-        policies[policyCounter] = InsurancePolicy({
-            policyType: _type,
-            premiumRate: _premiumRate,
-            coverageLimit: _coverageLimit,
-            deductible: _deductible,
-            isActive: true,
-            totalPremiums: 0,
-            totalClaims: 0
-        });
-        
-        emit PolicyCreated(policyCounter, _type);
-    }
-    
-    /**
-     * @dev Purchase insurance for a project
-     */
-    function purchaseInsurance(
-        uint256 policyId,
+    function createPolicy(
         uint256 projectId,
-        uint256 coverageAmount
-    ) external nonReentrant {
-        InsurancePolicy storage policy = policies[policyId];
-        require(policy.isActive, "Policy not active");
-        require(coverageAmount <= policy.coverageLimit, "Coverage exceeds limit");
-        require(coverageAmount > 0, "Coverage must be greater than 0");
+        InsuranceType insuranceType,
+        uint256 coverageAmount,
+        uint256 duration
+    ) external nonReentrant whenNotPaused returns (uint256) {
+        require(coverageAmount > 0, "Coverage amount must be greater than 0");
+        require(coverageAmount <= insurancePool.maxCoveragePerPolicy, "Coverage exceeds maximum");
+        require(duration > 0 && duration <= 365 days, "Invalid duration");
         
-        // Verify project exists and user is participant
-        SkillFiEscrow.Project memory project = escrow.getProject(projectId);
-        require(project.id != 0, "Project does not exist");
+        // Calculate premium based on risk factors
+        uint256 premium = _calculatePremium(msg.sender, insuranceType, coverageAmount, duration);
+        
+        // Check if pool can cover this policy
         require(
-            msg.sender == project.client || msg.sender == project.freelancer,
-            "Not project participant"
+            insurancePool.totalClaims + coverageAmount <= insurancePool.maxTotalCoverage,
+            "Exceeds pool capacity"
         );
-        
-        // Calculate premium
-        uint256 premium = (coverageAmount * policy.premiumRate) / 10000;
-        require(premium > 0, "Premium too low");
         
         // Transfer premium
         skillToken.safeTransferFrom(msg.sender, address(this), premium);
         
-        // Create user policy
-        userPolicyCounter++;
-        userPolicies[userPolicyCounter] = UserPolicy({
-            policyId: policyId,
+        policyCounter++;
+        uint256 policyId = policyCounter;
+        
+        policies[policyId] = InsurancePolicy({
+            id: policyId,
             projectId: projectId,
             policyholder: msg.sender,
+            insuranceType: insuranceType,
             coverageAmount: coverageAmount,
-            premiumPaid: premium,
-            purchaseTime: block.timestamp,
-            expiryTime: block.timestamp + 365 days, // 1 year coverage
-            isActive: true
+            premium: premium,
+            deductible: _calculateDeductible(coverageAmount),
+            startTime: block.timestamp,
+            endTime: block.timestamp + duration,
+            isActive: true,
+            hasClaimed: false
         });
         
-        // Update tracking
-        userPolicyIds[msg.sender].push(userPolicyCounter);
-        projectPolicies[projectId].push(userPolicyCounter);
-        policy.totalPremiums += premium;
+        userPolicies[msg.sender].push(policyId);
+        projectPolicies[projectId].push(policyId);
         
-        // Add to insurance pool
+        // Update pool
+        insurancePool.totalPremiums += premium;
         insurancePool.totalFunds += premium;
-        insurancePool.availableFunds += premium;
         
-        emit PolicyPurchased(userPolicyCounter, msg.sender, projectId, coverageAmount);
+        emit PolicyCreated(policyId, projectId, msg.sender, insuranceType, coverageAmount, premium);
+        emit PremiumPaid(policyId, msg.sender, premium);
+        
+        return policyId;
     }
     
     /**
      * @dev Submit insurance claim
      */
     function submitClaim(
-        uint256 userPolicyId,
+        uint256 policyId,
         uint256 claimAmount,
-        string memory evidence
-    ) external nonReentrant {
-        UserPolicy storage userPolicy = userPolicies[userPolicyId];
-        require(userPolicy.isActive, "Policy not active");
-        require(userPolicy.policyholder == msg.sender, "Not policy holder");
-        require(block.timestamp <= userPolicy.expiryTime, "Policy expired");
-        require(claimAmount <= userPolicy.coverageAmount, "Claim exceeds coverage");
+        string memory evidence,
+        string memory reason
+    ) external validPolicy(policyId) nonReentrant returns (uint256) {
+        InsurancePolicy storage policy = policies[policyId];
         
-        InsurancePolicy storage policy = policies[userPolicy.policyId];
+        require(policy.policyholder == msg.sender, "Not policy holder");
+        require(policy.isActive, "Policy not active");
+        require(block.timestamp <= policy.endTime, "Policy expired");
+        require(!policy.hasClaimed, "Already claimed");
+        require(claimAmount <= policy.coverageAmount, "Claim exceeds coverage");
         require(claimAmount > policy.deductible, "Claim below deductible");
         
         claimCounter++;
-        InsuranceClaim storage claim = claims[claimCounter];
-        claim.userPolicyId = userPolicyId;
-        claim.claimant = msg.sender;
-        claim.claimAmount = claimAmount;
-        claim.evidence = evidence;
-        claim.status = ClaimStatus.Submitted;
-        claim.submissionTime = block.timestamp;
-        claim.reviewDeadline = block.timestamp + REVIEW_PERIOD;
+        uint256 claimId = claimCounter;
         
-        // Assign reviewers
-        _assignReviewers(claimCounter);
+        claims[claimId] = InsuranceClaim({
+            id: claimId,
+            policyId: policyId,
+            claimant: msg.sender,
+            status: ClaimStatus.Pending,
+            claimAmount: claimAmount,
+            evidence: evidence,
+            reason: reason,
+            submittedAt: block.timestamp,
+            reviewedAt: 0,
+            reviewer: address(0),
+            reviewNotes: ""
+        });
         
-        emit ClaimSubmitted(claimCounter, userPolicyId, msg.sender, claimAmount);
-    }
-    
-    /**
-     * @dev Assign reviewers to claim
-     */
-    function _assignReviewers(uint256 claimId) internal {
-        require(authorizedReviewers.length >= MIN_REVIEWERS, "Insufficient reviewers");
+        userClaims[msg.sender].push(claimId);
+        policy.hasClaimed = true;
         
-        InsuranceClaim storage claim = claims[claimId];
+        emit ClaimSubmitted(claimId, policyId, msg.sender, claimAmount, reason);
         
-        // Simple random assignment (in production, use more sophisticated method)
-        uint256 seed = uint256(keccak256(abi.encodePacked(block.timestamp, claimId)));
-        for (uint256 i = 0; i < MIN_REVIEWERS; i++) {
-            uint256 index = (seed + i) % authorizedReviewers.length;
-            claim.reviewers.push(authorizedReviewers[index]);
-        }
-        
-        claim.status = ClaimStatus.UnderReview;
+        return claimId;
     }
     
     /**
      * @dev Review insurance claim
      */
-    function reviewClaim(uint256 claimId, bool approve) external onlyAuthorizedReviewer {
+    function reviewClaim(
+        uint256 claimId,
+        ClaimStatus decision,
+        string memory notes
+    ) external validClaim(claimId) onlyReviewer {
         InsuranceClaim storage claim = claims[claimId];
-        require(claim.status == ClaimStatus.UnderReview, "Claim not under review");
-        require(block.timestamp <= claim.reviewDeadline, "Review period expired");
-        require(!claim.reviewerVotes[msg.sender], "Already reviewed");
+        require(claim.status == ClaimStatus.Pending, "Claim already reviewed");
+        require(
+            decision == ClaimStatus.Approved || decision == ClaimStatus.Rejected,
+            "Invalid decision"
+        );
         
-        // Check if reviewer is assigned
-        bool isAssigned = false;
-        for (uint256 i = 0; i < claim.reviewers.length; i++) {
-            if (claim.reviewers[i] == msg.sender) {
-                isAssigned = true;
-                break;
-            }
-        }
-        require(isAssigned, "Not assigned to this claim");
+        claim.status = decision;
+        claim.reviewedAt = block.timestamp;
+        claim.reviewer = msg.sender;
+        claim.reviewNotes = notes;
         
-        claim.reviewerVotes[msg.sender] = true;
+        emit ClaimReviewed(claimId, decision, msg.sender, notes);
         
-        if (approve) {
-            claim.approvalVotes++;
-        } else {
-            claim.rejectionVotes++;
-        }
-        
-        emit ClaimReviewed(claimId, msg.sender, approve);
-        
-        // Check if review is complete
-        if (claim.approvalVotes + claim.rejectionVotes == claim.reviewers.length) {
-            _resolveClaim(claimId);
-        }
-        
-        // Reward reviewer
-        skillToken.mint(msg.sender, REVIEWER_REWARD);
-    }
-    
-    /**
-     * @dev Resolve claim based on reviews
-     */
-    function _resolveClaim(uint256 claimId) internal {
-        InsuranceClaim storage claim = claims[claimId];
-        UserPolicy storage userPolicy = userPolicies[claim.userPolicyId];
-        InsurancePolicy storage policy = policies[userPolicy.policyId];
-        
-        uint256 payoutAmount = 0;
-        
-        if (claim.approvalVotes > claim.rejectionVotes) {
-            // Claim approved
-            claim.status = ClaimStatus.Approved;
-            payoutAmount = claim.claimAmount - policy.deductible;
-            
-            // Check if sufficient funds available
-            if (payoutAmount <= insurancePool.availableFunds) {
-                claim.status = ClaimStatus.Paid;
-                insurancePool.availableFunds -= payoutAmount;
-                policy.totalClaims += payoutAmount;
-                
-                // Transfer payout
-                skillToken.safeTransfer(claim.claimant, payoutAmount);
-            }
-        } else {
-            // Claim rejected
-            claim.status = ClaimStatus.Rejected;
-        }
-        
-        // Deactivate policy after claim
-        userPolicy.isActive = false;
-        
-        emit ClaimResolved(claimId, claim.status, payoutAmount);
-    }
-    
-    /**
-     * @dev Force resolve expired claims
-     */
-    function resolveExpiredClaim(uint256 claimId) external {
-        InsuranceClaim storage claim = claims[claimId];
-        require(claim.status == ClaimStatus.UnderReview, "Claim not under review");
-        require(block.timestamp > claim.reviewDeadline, "Review period not expired");
-        
-        // Auto-reject if not enough reviews
-        if (claim.approvalVotes + claim.rejectionVotes < MIN_REVIEWERS) {
-            claim.status = ClaimStatus.Rejected;
-            emit ClaimResolved(claimId, ClaimStatus.Rejected, 0);
-        } else {
-            _resolveClaim(claimId);
+        // If approved, process payout
+        if (decision == ClaimStatus.Approved) {
+            _processPayout(claimId);
         }
     }
     
     /**
-     * @dev Deposit funds to insurance pool
+     * @dev Process approved claim payout
      */
-    function depositToPool(uint256 amount) external {
+    function _processPayout(uint256 claimId) internal {
+        InsuranceClaim storage claim = claims[claimId];
+        InsurancePolicy storage policy = policies[claim.policyId];
+        
+        require(claim.status == ClaimStatus.Approved, "Claim not approved");
+        
+        uint256 payoutAmount = claim.claimAmount - policy.deductible;
+        require(insurancePool.totalFunds >= payoutAmount, "Insufficient pool funds");
+        
+        // Update pool
+        insurancePool.totalFunds -= payoutAmount;
+        insurancePool.totalClaims += payoutAmount;
+        
+        // Transfer payout
+        skillToken.safeTransfer(claim.claimant, payoutAmount);
+        
+        claim.status = ClaimStatus.Paid;
+        
+        emit ClaimPaid(claimId, claim.claimant, payoutAmount);
+    }
+    
+    /**
+     * @dev Calculate premium based on risk factors
+     */
+    function _calculatePremium(
+        address user,
+        InsuranceType insuranceType,
+        uint256 coverageAmount,
+        uint256 duration
+    ) internal view returns (uint256) {
+        uint256 basePremium = (coverageAmount * premiumRates[insuranceType]) / 10000;
+        
+        // Apply risk multiplier
+        uint256 userRisk = userRiskScores[user];
+        if (userRisk == 0) userRisk = 500; // Default medium risk
+        
+        uint256 riskMultiplier = 5000 + (userRisk * 5000) / MAX_RISK_SCORE; // 0.5x to 1.5x
+        uint256 adjustedPremium = (basePremium * riskMultiplier) / 10000;
+        
+        // Apply duration multiplier
+        uint256 durationMultiplier = (duration * 10000) / 365 days; // Pro-rated for duration
+        adjustedPremium = (adjustedPremium * durationMultiplier) / 10000;
+        
+        return adjustedPremium;
+    }
+    
+    /**
+     * @dev Calculate deductible (10% of coverage amount)
+     */
+    function _calculateDeductible(uint256 coverageAmount) internal pure returns (uint256) {
+        return (coverageAmount * 1000) / 10000; // 10%
+    }
+    
+    /**
+     * @dev Fund insurance pool
+     */
+    function fundPool(uint256 amount) external nonReentrant {
+        require(amount > 0, "Amount must be greater than 0");
+        
         skillToken.safeTransferFrom(msg.sender, address(this), amount);
         insurancePool.totalFunds += amount;
-        insurancePool.availableFunds += amount;
         
-        emit FundsDeposited(msg.sender, amount);
+        emit PoolFunded(msg.sender, amount);
+    }
+    
+    /**
+     * @dev Update user risk score
+     */
+    function updateUserRiskScore(address user, uint256 riskScore) external onlyOwner {
+        require(riskScore <= MAX_RISK_SCORE, "Risk score too high");
+        userRiskScores[user] = riskScore;
+    }
+    
+    /**
+     * @dev Update skill risk score
+     */
+    function updateSkillRiskScore(string memory skill, uint256 riskScore) external onlyOwner {
+        require(riskScore <= MAX_RISK_SCORE, "Risk score too high");
+        skillRiskScores[skill] = riskScore;
+    }
+    
+    /**
+     * @dev Update premium rate for insurance type
+     */
+    function updatePremiumRate(InsuranceType insuranceType, uint256 rate) external onlyOwner {
+        require(rate <= 2000, "Rate too high"); // Max 20%
+        premiumRates[insuranceType] = rate;
+    }
+    
+    /**
+     * @dev Add authorized reviewer
+     */
+    function addReviewer(address reviewer) external onlyOwner {
+        authorizedReviewers[reviewer] = true;
+    }
+    
+    /**
+     * @dev Remove authorized reviewer
+     */
+    function removeReviewer(address reviewer) external onlyOwner {
+        authorizedReviewers[reviewer] = false;
     }
     
     /**
      * @dev Get user's policies
      */
     function getUserPolicies(address user) external view returns (uint256[] memory) {
-        return userPolicyIds[user];
+        return userPolicies[user];
+    }
+    
+    /**
+     * @dev Get user's claims
+     */
+    function getUserClaims(address user) external view returns (uint256[] memory) {
+        return userClaims[user];
     }
     
     /**
@@ -431,106 +417,64 @@ contract SkillFiInsurance is ReentrancyGuard, Ownable {
     }
     
     /**
-     * @dev Get claim reviewers
+     * @dev Get pool utilization ratio
      */
-    function getClaimReviewers(uint256 claimId) external view returns (address[] memory) {
-        return claims[claimId].reviewers;
+    function getPoolUtilization() external view returns (uint256) {
+        if (insurancePool.totalFunds == 0) return 0;
+        return (insurancePool.totalClaims * 10000) / insurancePool.totalFunds;
     }
     
     /**
-     * @dev Check if reviewer voted on claim
+     * @dev Check if pool can cover new policy
      */
-    function hasReviewerVoted(uint256 claimId, address reviewer) external view returns (bool) {
-        return claims[claimId].reviewerVotes[reviewer];
+    function canCoverPolicy(uint256 coverageAmount) external view returns (bool) {
+        return insurancePool.totalClaims + coverageAmount <= insurancePool.maxTotalCoverage;
     }
     
     /**
-     * @dev Get insurance pool stats
+     * @dev Get premium quote
      */
-    function getPoolStats() external view returns (
-        uint256 totalFunds,
-        uint256 availableFunds,
-        uint256 utilizationRate,
-        uint256 reserveRatio
-    ) {
-        uint256 utilization = insurancePool.totalFunds > 0 ? 
-            ((insurancePool.totalFunds - insurancePool.availableFunds) * 10000) / insurancePool.totalFunds : 0;
-        
-        return (
-            insurancePool.totalFunds,
-            insurancePool.availableFunds,
-            utilization,
-            insurancePool.reserveRatio
-        );
+    function getPremiumQuote(
+        address user,
+        InsuranceType insuranceType,
+        uint256 coverageAmount,
+        uint256 duration
+    ) external view returns (uint256) {
+        return _calculatePremium(user, insuranceType, coverageAmount, duration);
     }
     
     /**
-     * @dev Admin functions
+     * @dev Emergency functions
      */
-    function addReviewer(address reviewer) external onlyOwner {
-        require(!isAuthorizedReviewer[reviewer], "Already authorized");
-        authorizedReviewers.push(reviewer);
-        isAuthorizedReviewer[reviewer] = true;
-        
-        emit ReviewerAdded(reviewer);
+    function pause() external onlyOwner {
+        _pause();
     }
     
-    function removeReviewer(address reviewer) external onlyOwner {
-        require(isAuthorizedReviewer[reviewer], "Not authorized");
-        isAuthorizedReviewer[reviewer] = false;
-        
-        // Remove from array
-        for (uint256 i = 0; i < authorizedReviewers.length; i++) {
-            if (authorizedReviewers[i] == reviewer) {
-                authorizedReviewers[i] = authorizedReviewers[authorizedReviewers.length - 1];
-                authorizedReviewers.pop();
-                break;
-            }
-        }
-    }
-    
-    function createPolicy(
-        InsuranceType _type,
-        uint256 _premiumRate,
-        uint256 _coverageLimit,
-        uint256 _deductible
-    ) external onlyOwner {
-        _createPolicy(_type, _premiumRate, _coverageLimit, _deductible);
-    }
-    
-    function updatePolicy(
-        uint256 policyId,
-        uint256 _premiumRate,
-        uint256 _coverageLimit,
-        uint256 _deductible,
-        bool _isActive
-    ) external onlyOwner {
-        InsurancePolicy storage policy = policies[policyId];
-        policy.premiumRate = _premiumRate;
-        policy.coverageLimit = _coverageLimit;
-        policy.deductible = _deductible;
-        policy.isActive = _isActive;
-    }
-    
-    function updatePoolSettings(
-        uint256 _reserveRatio,
-        uint256 _minReserve
-    ) external onlyOwner {
-        insurancePool.reserveRatio = _reserveRatio;
-        insurancePool.minReserve = _minReserve;
+    function unpause() external onlyOwner {
+        _unpause();
     }
     
     /**
-     * @dev Emergency withdraw (only when pool is over-funded)
+     * @dev Emergency withdraw (only when paused)
      */
-    function emergencyWithdraw(uint256 amount) external onlyOwner {
-        require(
-            insurancePool.availableFunds - amount >= insurancePool.minReserve,
-            "Would breach minimum reserve"
-        );
-        
-        insurancePool.totalFunds -= amount;
-        insurancePool.availableFunds -= amount;
+    function emergencyWithdraw(uint256 amount) external onlyOwner whenPaused {
+        require(amount <= insurancePool.totalFunds, "Insufficient funds");
         skillToken.safeTransfer(owner(), amount);
+        insurancePool.totalFunds -= amount;
+    }
+    
+    /**
+     * @dev Update pool parameters
+     */
+    function updatePoolParameters(
+        uint256 _maxCoveragePerPolicy,
+        uint256 _maxTotalCoverage,
+        uint256 _reserveRatio
+    ) external onlyOwner {
+        require(_reserveRatio <= 5000, "Reserve ratio too high"); // Max 50%
+        
+        insurancePool.maxCoveragePerPolicy = _maxCoveragePerPolicy;
+        insurancePool.maxTotalCoverage = _maxTotalCoverage;
+        insurancePool.reserveRatio = _reserveRatio;
     }
 }
