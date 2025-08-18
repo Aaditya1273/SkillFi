@@ -2,85 +2,122 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/math/Math.sol";
 import "./SkillToken.sol";
-import "./SkillFiEscrow.sol";
 
 /**
  * @title SkillFiRewards
- * @dev Advanced reward system with achievement-based incentives and referral program
+ * @dev Advanced reward system with multiple earning mechanisms and loyalty programs
  */
-contract SkillFiRewards is ReentrancyGuard, Ownable {
+contract SkillFiRewards is ReentrancyGuard, Pausable, Ownable {
     using SafeERC20 for IERC20;
+    using Math for uint256;
     
     SkillToken public immutable skillToken;
-    SkillFiEscrow public immutable escrow;
     
-    // Achievement types
-    enum AchievementType {
-        FirstProject,
-        ProjectMilestone,
-        RatingMilestone,
-        VolumeThreshold,
-        ConsecutiveProjects,
-        Referral,
-        LongTermStaking,
-        CommunityContribution
+    enum RewardType {
+        ProjectCompletion,    // 0 - Rewards for completing projects
+        QualityBonus,        // 1 - Bonus for high-quality work
+        ReferralReward,      // 2 - Rewards for referring new users
+        LoyaltyReward,       // 3 - Long-term platform usage rewards
+        CommunityReward,     // 4 - DAO participation and community contributions
+        SkillDevelopment,    // 5 - Learning and skill improvement rewards
+        EarlyAdopter,        // 6 - Early platform adoption rewards
+        SeasonalBonus        // 7 - Special seasonal/event bonuses
     }
     
-    struct Achievement {
-        AchievementType achievementType;
-        string name;
-        string description;
-        uint256 rewardAmount;
-        uint256 threshold;
+    enum LoyaltyTier {
+        Bronze,    // 0 - 0-10 projects
+        Silver,    // 1 - 11-25 projects
+        Gold,      // 2 - 26-50 projects
+        Platinum,  // 3 - 51-100 projects
+        Diamond    // 4 - 100+ projects
+    }
+    
+    struct RewardPool {
+        uint256 totalAllocated;
+        uint256 totalDistributed;
+        uint256 rewardRate; // Rewards per unit
+        uint256 lastUpdateTime;
         bool isActive;
-        uint256 totalClaimed;
     }
     
-    struct UserAchievements {
-        mapping(uint256 => bool) claimed;
-        uint256 totalRewardsEarned;
-        uint256 referralCount;
-        address referrer;
-        uint256 referralRewards;
+    struct UserRewards {
+        uint256 totalEarned;
+        uint256 totalClaimed;
+        uint256 pendingRewards;
+        uint256 lastClaimTime;
+        uint256 streakDays;
+        uint256 lastActivityTime;
+        LoyaltyTier loyaltyTier;
+        mapping(RewardType => uint256) rewardsByType;
+        mapping(address => uint256) referralRewards;
     }
     
     struct ReferralProgram {
-        uint256 referrerReward;
-        uint256 refereeReward;
-        uint256 minProjectValue;
+        uint256 referrerReward;    // Reward for referrer
+        uint256 refereeReward;     // Reward for new user
+        uint256 minProjectsForReward; // Min projects before referral reward
+        uint256 maxReferrals;      // Max referrals per user
         bool isActive;
     }
     
-    struct SeasonalReward {
+    struct LoyaltyProgram {
+        uint256 baseMultiplier;    // Base loyalty multiplier (basis points)
+        uint256 tierMultipliers;   // Additional multiplier per tier
+        uint256 streakBonus;       // Bonus for consecutive days
+        uint256 maxStreakBonus;    // Maximum streak bonus
+    }
+    
+    struct SeasonalCampaign {
+        string name;
         uint256 startTime;
         uint256 endTime;
-        uint256 multiplier; // basis points (10000 = 1x)
-        uint256 totalPool;
-        uint256 claimed;
+        uint256 totalRewards;
+        uint256 distributedRewards;
+        uint256 multiplier; // Bonus multiplier for the period
         bool isActive;
     }
     
-    // Storage
-    mapping(uint256 => Achievement) public achievements;
-    mapping(address => UserAchievements) public userAchievements;
-    mapping(address => mapping(uint256 => uint256)) public userProgress;
+    mapping(RewardType => RewardPool) public rewardPools;
+    mapping(address => UserRewards) public userRewards;
+    mapping(address => address) public referrers; // user => referrer
+    mapping(address => address[]) public referees; // referrer => referees
+    mapping(address => uint256) public userProjectCounts;
+    mapping(uint256 => SeasonalCampaign) public seasonalCampaigns;
     
     ReferralProgram public referralProgram;
-    SeasonalReward public currentSeason;
+    LoyaltyProgram public loyaltyProgram;
     
-    uint256 public achievementCounter;
-    uint256 public constant MAX_REFERRAL_DEPTH = 3;
-    uint256 public constant LOYALTY_BONUS_THRESHOLD = 10; // 10 completed projects
+    uint256 public campaignCounter;
+    uint256 public totalRewardsDistributed;
     
-    // Events
-    event AchievementUnlocked(
+    // Authorized contracts that can distribute rewards
+    mapping(address => bool) public authorizedDistributors;
+    
+    // Daily activity tracking
+    mapping(address => mapping(uint256 => bool)) public dailyActivity; // user => day => active
+    
+    uint256 public constant LOYALTY_TIER_THRESHOLDS = 10; // Projects per tier
+    uint256 public constant MAX_STREAK_DAYS = 365;
+    uint256 public constant DAILY_LOGIN_REWARD = 10 * 10**18; // 10 SKILL
+    uint256 public constant QUALITY_BONUS_THRESHOLD = 45; // 4.5 rating * 10
+    
+    event RewardEarned(
         address indexed user,
-        uint256 indexed achievementId,
-        uint256 rewardAmount
+        RewardType indexed rewardType,
+        uint256 amount,
+        string reason
+    );
+    
+    event RewardClaimed(
+        address indexed user,
+        uint256 amount,
+        uint256 totalClaimed
     );
     
     event ReferralReward(
@@ -90,365 +127,512 @@ contract SkillFiRewards is ReentrancyGuard, Ownable {
         uint256 refereeReward
     );
     
-    event SeasonalRewardClaimed(
+    event LoyaltyTierUpdated(
         address indexed user,
-        uint256 baseReward,
-        uint256 bonusReward,
-        uint256 multiplier
+        LoyaltyTier oldTier,
+        LoyaltyTier newTier
     );
     
-    event ProgressUpdated(
+    event StreakUpdated(
         address indexed user,
-        uint256 indexed achievementId,
-        uint256 progress
+        uint256 streakDays,
+        uint256 bonusReward
     );
     
-    modifier onlyEscrow() {
-        require(msg.sender == address(escrow), "Only escrow can call");
+    event SeasonalCampaignCreated(
+        uint256 indexed campaignId,
+        string name,
+        uint256 startTime,
+        uint256 endTime,
+        uint256 totalRewards
+    );
+    
+    modifier onlyAuthorized() {
+        require(
+            authorizedDistributors[msg.sender] || msg.sender == owner(),
+            "Not authorized to distribute rewards"
+        );
         _;
     }
     
-    constructor(
-        address _skillToken,
-        address _escrow
-    ) {
+    constructor(address _skillToken) {
         skillToken = SkillToken(_skillToken);
-        escrow = SkillFiEscrow(_escrow);
         
-        _initializeAchievements();
-        _initializeReferralProgram();
-    }
-    
-    /**
-     * @dev Initialize default achievements
-     */
-    function _initializeAchievements() internal {
-        // First Project Achievement
-        _createAchievement(
-            AchievementType.FirstProject,
-            "First Steps",
-            "Complete your first project on SkillFi",
-            100 * 10**18, // 100 SKILL
-            1,
-            true
-        );
+        // Initialize reward pools
+        _initializeRewardPools();
         
-        // Project Milestones
-        _createAchievement(
-            AchievementType.ProjectMilestone,
-            "Rising Star",
-            "Complete 5 projects successfully",
-            500 * 10**18, // 500 SKILL
-            5,
-            true
-        );
-        
-        _createAchievement(
-            AchievementType.ProjectMilestone,
-            "Veteran Freelancer",
-            "Complete 25 projects successfully",
-            2000 * 10**18, // 2000 SKILL
-            25,
-            true
-        );
-        
-        // Rating Milestones
-        _createAchievement(
-            AchievementType.RatingMilestone,
-            "Five Star Professional",
-            "Maintain 5-star average rating with 10+ ratings",
-            1000 * 10**18, // 1000 SKILL
-            50, // 5.0 * 10 ratings
-            true
-        );
-        
-        // Volume Thresholds
-        _createAchievement(
-            AchievementType.VolumeThreshold,
-            "High Earner",
-            "Earn 50,000 SKILL tokens from projects",
-            5000 * 10**18, // 5000 SKILL
-            50000 * 10**18,
-            true
-        );
-    }
-    
-    /**
-     * @dev Initialize referral program
-     */
-    function _initializeReferralProgram() internal {
+        // Initialize referral program
         referralProgram = ReferralProgram({
-            referrerReward: 200 * 10**18, // 200 SKILL
-            refereeReward: 100 * 10**18,  // 100 SKILL
-            minProjectValue: 1000 * 10**18, // 1000 SKILL minimum project
+            referrerReward: 500 * 10**18,  // 500 SKILL
+            refereeReward: 100 * 10**18,   // 100 SKILL
+            minProjectsForReward: 1,
+            maxReferrals: 50,
+            isActive: true
+        });
+        
+        // Initialize loyalty program
+        loyaltyProgram = LoyaltyProgram({
+            baseMultiplier: 10000,  // 100% (no bonus)
+            tierMultipliers: 500,   // 5% per tier
+            streakBonus: 100,       // 1% per day
+            maxStreakBonus: 5000    // 50% max
+        });
+    }
+    
+    /**
+     * @dev Initialize reward pools with default allocations
+     */
+    function _initializeRewardPools() internal {
+        rewardPools[RewardType.ProjectCompletion] = RewardPool({
+            totalAllocated: 5000000 * 10**18, // 5M SKILL
+            totalDistributed: 0,
+            rewardRate: 100 * 10**18, // 100 SKILL per project
+            lastUpdateTime: block.timestamp,
+            isActive: true
+        });
+        
+        rewardPools[RewardType.QualityBonus] = RewardPool({
+            totalAllocated: 2000000 * 10**18, // 2M SKILL
+            totalDistributed: 0,
+            rewardRate: 50 * 10**18, // 50 SKILL bonus
+            lastUpdateTime: block.timestamp,
+            isActive: true
+        });
+        
+        rewardPools[RewardType.ReferralReward] = RewardPool({
+            totalAllocated: 1000000 * 10**18, // 1M SKILL
+            totalDistributed: 0,
+            rewardRate: 500 * 10**18, // 500 SKILL per referral
+            lastUpdateTime: block.timestamp,
+            isActive: true
+        });
+        
+        rewardPools[RewardType.LoyaltyReward] = RewardPool({
+            totalAllocated: 3000000 * 10**18, // 3M SKILL
+            totalDistributed: 0,
+            rewardRate: 10 * 10**18, // 10 SKILL per day
+            lastUpdateTime: block.timestamp,
+            isActive: true
+        });
+        
+        rewardPools[RewardType.CommunityReward] = RewardPool({
+            totalAllocated: 1500000 * 10**18, // 1.5M SKILL
+            totalDistributed: 0,
+            rewardRate: 25 * 10**18, // 25 SKILL per contribution
+            lastUpdateTime: block.timestamp,
             isActive: true
         });
     }
     
     /**
-     * @dev Create new achievement
+     * @dev Distribute project completion reward
      */
-    function _createAchievement(
-        AchievementType _type,
-        string memory _name,
-        string memory _description,
-        uint256 _rewardAmount,
-        uint256 _threshold,
-        bool _isActive
-    ) internal {
-        achievementCounter++;
-        achievements[achievementCounter] = Achievement({
-            achievementType: _type,
-            name: _name,
-            description: _description,
-            rewardAmount: _rewardAmount,
-            threshold: _threshold,
-            isActive: _isActive,
-            totalClaimed: 0
-        });
-    }
-    
-    /**
-     * @dev Update user progress (called by escrow contract)
-     */
-    function updateProgress(
+    function distributeProjectReward(
         address user,
-        AchievementType achievementType,
-        uint256 value
-    ) external onlyEscrow {
-        // Update progress for all achievements of this type
-        for (uint256 i = 1; i <= achievementCounter; i++) {
-            Achievement storage achievement = achievements[i];
-            if (achievement.achievementType == achievementType && achievement.isActive) {
-                
-                if (achievementType == AchievementType.ProjectMilestone) {
-                    userProgress[user][i]++;
-                } else if (achievementType == AchievementType.VolumeThreshold) {
-                    userProgress[user][i] += value;
-                } else if (achievementType == AchievementType.RatingMilestone) {
-                    // Special handling for rating achievements
-                    uint256 avgRating = escrow.getUserRating(user);
-                    (,uint256 ratingCount,,,) = escrow.userReputations(user);
-                    userProgress[user][i] = avgRating * ratingCount;
-                } else {
-                    userProgress[user][i] = value;
-                }
-                
-                emit ProgressUpdated(user, i, userProgress[user][i]);
-                
-                // Check if achievement is unlocked
-                _checkAndUnlockAchievement(user, i);
-            }
-        }
-    }
-    
-    /**
-     * @dev Check and unlock achievement if threshold met
-     */
-    function _checkAndUnlockAchievement(address user, uint256 achievementId) internal {
-        Achievement storage achievement = achievements[achievementId];
-        UserAchievements storage userAch = userAchievements[user];
+        uint256 projectValue,
+        uint256 rating
+    ) external onlyAuthorized {
+        require(user != address(0), "Invalid user address");
         
-        if (!userAch.claimed[achievementId] && 
-            userProgress[user][achievementId] >= achievement.threshold) {
-            
-            userAch.claimed[achievementId] = true;
-            userAch.totalRewardsEarned += achievement.rewardAmount;
-            achievement.totalClaimed += achievement.rewardAmount;
-            
-            // Apply seasonal multiplier if active
-            uint256 finalReward = achievement.rewardAmount;
-            if (currentSeason.isActive && 
-                block.timestamp >= currentSeason.startTime && 
-                block.timestamp <= currentSeason.endTime) {
-                
-                uint256 bonus = (achievement.rewardAmount * (currentSeason.multiplier - 10000)) / 10000;
-                finalReward += bonus;
-                currentSeason.claimed += bonus;
-            }
-            
-            // Mint reward tokens
-            skillToken.mint(user, finalReward);
-            
-            emit AchievementUnlocked(user, achievementId, finalReward);
+        // Base project completion reward
+        uint256 baseReward = rewardPools[RewardType.ProjectCompletion].rewardRate;
+        
+        // Apply value-based multiplier (0.1% of project value, max 2x base reward)
+        uint256 valueBonus = (projectValue * 10) / 10000; // 0.1%
+        valueBonus = valueBonus.min(baseReward); // Cap at base reward
+        
+        uint256 totalReward = baseReward + valueBonus;
+        
+        // Apply loyalty multiplier
+        totalReward = _applyLoyaltyMultiplier(user, totalReward);
+        
+        _distributeReward(user, RewardType.ProjectCompletion, totalReward, "Project completion");
+        
+        // Update project count and loyalty tier
+        userProjectCounts[user]++;
+        _updateLoyaltyTier(user);
+        
+        // Quality bonus for high ratings
+        if (rating >= QUALITY_BONUS_THRESHOLD) {
+            uint256 qualityBonus = rewardPools[RewardType.QualityBonus].rewardRate;
+            qualityBonus = _applyLoyaltyMultiplier(user, qualityBonus);
+            _distributeReward(user, RewardType.QualityBonus, qualityBonus, "High quality work");
         }
+        
+        // Update daily activity
+        _updateDailyActivity(user);
     }
     
     /**
-     * @dev Register referral relationship
+     * @dev Process referral rewards
      */
-    function registerReferral(address referee, address referrer) external {
+    function processReferral(address referrer, address referee) external onlyAuthorized {
+        require(referrer != address(0) && referee != address(0), "Invalid addresses");
+        require(referrer != referee, "Cannot refer yourself");
+        require(referrers[referee] == address(0), "User already referred");
+        require(referees[referrer].length < referralProgram.maxReferrals, "Max referrals reached");
         require(referralProgram.isActive, "Referral program not active");
-        require(referee != referrer, "Cannot refer yourself");
-        require(userAchievements[referee].referrer == address(0), "Already has referrer");
-        require(referrer != address(0), "Invalid referrer");
         
-        userAchievements[referee].referrer = referrer;
+        referrers[referee] = referrer;
+        referees[referrer].push(referee);
+        
+        // Immediate referee reward
+        uint256 refereeReward = referralProgram.refereeReward;
+        _distributeReward(referee, RewardType.ReferralReward, refereeReward, "Welcome bonus");
+        
+        // Referrer reward (paid when referee completes first project)
+        userRewards[referrer].referralRewards[referee] = referralProgram.referrerReward;
+        
+        emit ReferralReward(referrer, referee, 0, refereeReward);
     }
     
     /**
-     * @dev Process referral rewards (called by escrow on first project completion)
+     * @dev Pay referrer reward when referee completes required projects
      */
-    function processReferralReward(address user, uint256 projectValue) external onlyEscrow {
-        if (!referralProgram.isActive || projectValue < referralProgram.minProjectValue) {
-            return;
-        }
+    function payReferrerReward(address referee) external onlyAuthorized {
+        address referrer = referrers[referee];
+        require(referrer != address(0), "No referrer found");
+        require(userProjectCounts[referee] >= referralProgram.minProjectsForReward, "Min projects not met");
         
-        address referrer = userAchievements[user].referrer;
-        if (referrer == address(0)) {
-            return;
-        }
+        uint256 reward = userRewards[referrer].referralRewards[referee];
+        require(reward > 0, "No pending referral reward");
         
-        // Check if this is the user's first completed project
-        (,, uint256 completedProjects,,) = escrow.userReputations(user);
-        if (completedProjects != 1) {
-            return;
-        }
+        userRewards[referrer].referralRewards[referee] = 0;
+        _distributeReward(referrer, RewardType.ReferralReward, reward, "Referral bonus");
         
-        // Reward referrer and referee
-        userAchievements[referrer].referralCount++;
-        userAchievements[referrer].referralRewards += referralProgram.referrerReward;
-        userAchievements[user].totalRewardsEarned += referralProgram.refereeReward;
-        
-        skillToken.mint(referrer, referralProgram.referrerReward);
-        skillToken.mint(user, referralProgram.refereeReward);
-        
-        emit ReferralReward(
-            referrer,
-            user,
-            referralProgram.referrerReward,
-            referralProgram.refereeReward
-        );
+        emit ReferralReward(referrer, referee, reward, 0);
     }
     
     /**
-     * @dev Start seasonal reward campaign
+     * @dev Distribute community participation reward
      */
-    function startSeasonalReward(
-        uint256 duration,
+    function distributeCommunityReward(
+        address user,
         uint256 multiplier,
-        uint256 totalPool
-    ) external onlyOwner {
-        require(multiplier >= 10000, "Multiplier must be at least 1x");
-        require(totalPool > 0, "Pool must be greater than 0");
+        string memory reason
+    ) external onlyAuthorized {
+        uint256 baseReward = rewardPools[RewardType.CommunityReward].rewardRate;
+        uint256 reward = (baseReward * multiplier) / 100;
+        reward = _applyLoyaltyMultiplier(user, reward);
         
-        currentSeason = SeasonalReward({
+        _distributeReward(user, RewardType.CommunityReward, reward, reason);
+        _updateDailyActivity(user);
+    }
+    
+    /**
+     * @dev Claim daily login reward and update streak
+     */
+    function claimDailyReward() external nonReentrant whenNotPaused {
+        uint256 today = block.timestamp / 86400;
+        require(!dailyActivity[msg.sender][today], "Already claimed today");
+        
+        UserRewards storage rewards = userRewards[msg.sender];
+        
+        // Update streak
+        uint256 yesterday = today - 1;
+        if (dailyActivity[msg.sender][yesterday] || rewards.streakDays == 0) {
+            rewards.streakDays++;
+            if (rewards.streakDays > MAX_STREAK_DAYS) {
+                rewards.streakDays = MAX_STREAK_DAYS;
+            }
+        } else {
+            rewards.streakDays = 1; // Reset streak
+        }
+        
+        // Calculate streak bonus
+        uint256 streakBonus = (DAILY_LOGIN_REWARD * rewards.streakDays * loyaltyProgram.streakBonus) / 10000;
+        streakBonus = streakBonus.min((DAILY_LOGIN_REWARD * loyaltyProgram.maxStreakBonus) / 10000);
+        
+        uint256 totalReward = DAILY_LOGIN_REWARD + streakBonus;
+        totalReward = _applyLoyaltyMultiplier(msg.sender, totalReward);
+        
+        _distributeReward(msg.sender, RewardType.LoyaltyReward, totalReward, "Daily login");
+        _updateDailyActivity(msg.sender);
+        
+        emit StreakUpdated(msg.sender, rewards.streakDays, streakBonus);
+    }
+    
+    /**
+     * @dev Create seasonal campaign
+     */
+    function createSeasonalCampaign(
+        string memory name,
+        uint256 duration,
+        uint256 totalRewards,
+        uint256 multiplier
+    ) external onlyOwner returns (uint256) {
+        require(duration > 0 && duration <= 90 days, "Invalid duration");
+        require(totalRewards > 0, "Invalid reward amount");
+        require(multiplier >= 10000 && multiplier <= 30000, "Invalid multiplier"); // 1x to 3x
+        
+        campaignCounter++;
+        uint256 campaignId = campaignCounter;
+        
+        seasonalCampaigns[campaignId] = SeasonalCampaign({
+            name: name,
             startTime: block.timestamp,
             endTime: block.timestamp + duration,
+            totalRewards: totalRewards,
+            distributedRewards: 0,
             multiplier: multiplier,
-            totalPool: totalPool,
-            claimed: 0,
             isActive: true
         });
         
-        // Transfer pool tokens to contract
-        skillToken.safeTransferFrom(msg.sender, address(this), totalPool);
+        emit SeasonalCampaignCreated(campaignId, name, block.timestamp, block.timestamp + duration, totalRewards);
+        
+        return campaignId;
     }
     
     /**
-     * @dev End seasonal reward campaign
+     * @dev Distribute seasonal bonus
      */
-    function endSeasonalReward() external onlyOwner {
-        require(currentSeason.isActive, "No active season");
+    function distributeSeasonalBonus(
+        address user,
+        uint256 campaignId,
+        uint256 baseAmount,
+        string memory reason
+    ) external onlyAuthorized {
+        SeasonalCampaign storage campaign = seasonalCampaigns[campaignId];
+        require(campaign.isActive, "Campaign not active");
+        require(block.timestamp >= campaign.startTime && block.timestamp <= campaign.endTime, "Campaign not running");
         
-        currentSeason.isActive = false;
+        uint256 bonusAmount = (baseAmount * campaign.multiplier) / 10000;
+        require(campaign.distributedRewards + bonusAmount <= campaign.totalRewards, "Campaign budget exceeded");
         
-        // Return unclaimed tokens
-        uint256 unclaimed = currentSeason.totalPool - currentSeason.claimed;
-        if (unclaimed > 0) {
-            skillToken.safeTransfer(owner(), unclaimed);
+        campaign.distributedRewards += bonusAmount;
+        _distributeReward(user, RewardType.SeasonalBonus, bonusAmount, reason);
+    }
+    
+    /**
+     * @dev Internal function to distribute rewards
+     */
+    function _distributeReward(
+        address user,
+        RewardType rewardType,
+        uint256 amount,
+        string memory reason
+    ) internal {
+        require(amount > 0, "Invalid reward amount");
+        
+        RewardPool storage pool = rewardPools[rewardType];
+        require(pool.isActive, "Reward pool not active");
+        require(pool.totalDistributed + amount <= pool.totalAllocated, "Pool exhausted");
+        
+        UserRewards storage rewards = userRewards[user];
+        
+        rewards.totalEarned += amount;
+        rewards.pendingRewards += amount;
+        rewards.rewardsByType[rewardType] += amount;
+        rewards.lastActivityTime = block.timestamp;
+        
+        pool.totalDistributed += amount;
+        totalRewardsDistributed += amount;
+        
+        emit RewardEarned(user, rewardType, amount, reason);
+    }
+    
+    /**
+     * @dev Apply loyalty multiplier based on user's tier
+     */
+    function _applyLoyaltyMultiplier(address user, uint256 amount) internal view returns (uint256) {
+        UserRewards storage rewards = userRewards[user];
+        uint256 multiplier = loyaltyProgram.baseMultiplier + 
+                           (uint256(rewards.loyaltyTier) * loyaltyProgram.tierMultipliers);
+        
+        return (amount * multiplier) / 10000;
+    }
+    
+    /**
+     * @dev Update user's loyalty tier based on project count
+     */
+    function _updateLoyaltyTier(address user) internal {
+        uint256 projectCount = userProjectCounts[user];
+        LoyaltyTier oldTier = userRewards[user].loyaltyTier;
+        LoyaltyTier newTier = oldTier;
+        
+        if (projectCount >= 100) {
+            newTier = LoyaltyTier.Diamond;
+        } else if (projectCount >= 51) {
+            newTier = LoyaltyTier.Platinum;
+        } else if (projectCount >= 26) {
+            newTier = LoyaltyTier.Gold;
+        } else if (projectCount >= 11) {
+            newTier = LoyaltyTier.Silver;
+        } else {
+            newTier = LoyaltyTier.Bronze;
+        }
+        
+        if (newTier != oldTier) {
+            userRewards[user].loyaltyTier = newTier;
+            emit LoyaltyTierUpdated(user, oldTier, newTier);
         }
     }
     
     /**
-     * @dev Get user's achievement progress
+     * @dev Update daily activity tracking
      */
-    function getUserProgress(address user, uint256 achievementId) external view returns (uint256) {
-        return userProgress[user][achievementId];
+    function _updateDailyActivity(address user) internal {
+        uint256 today = block.timestamp / 86400;
+        dailyActivity[user][today] = true;
     }
     
     /**
-     * @dev Check if user has claimed achievement
+     * @dev Claim pending rewards
      */
-    function hasClaimedAchievement(address user, uint256 achievementId) external view returns (bool) {
-        return userAchievements[user].claimed[achievementId];
+    function claimRewards() external nonReentrant whenNotPaused {
+        UserRewards storage rewards = userRewards[msg.sender];
+        uint256 pendingAmount = rewards.pendingRewards;
+        require(pendingAmount > 0, "No pending rewards");
+        
+        rewards.pendingRewards = 0;
+        rewards.totalClaimed += pendingAmount;
+        rewards.lastClaimTime = block.timestamp;
+        
+        // Mint reward tokens
+        skillToken.mint(msg.sender, pendingAmount);
+        
+        emit RewardClaimed(msg.sender, pendingAmount, rewards.totalClaimed);
     }
     
     /**
-     * @dev Get user's total rewards earned
+     * @dev Get user's reward summary
      */
-    function getUserTotalRewards(address user) external view returns (uint256) {
-        return userAchievements[user].totalRewardsEarned;
-    }
-    
-    /**
-     * @dev Get user's referral stats
-     */
-    function getUserReferralStats(address user) external view returns (
-        uint256 referralCount,
-        uint256 referralRewards,
-        address referrer
+    function getUserRewardSummary(address user) external view returns (
+        uint256 totalEarned,
+        uint256 totalClaimed,
+        uint256 pendingRewards,
+        LoyaltyTier loyaltyTier,
+        uint256 streakDays,
+        uint256 projectCount
     ) {
-        UserAchievements storage userAch = userAchievements[user];
+        UserRewards storage rewards = userRewards[user];
         return (
-            userAch.referralCount,
-            userAch.referralRewards,
-            userAch.referrer
+            rewards.totalEarned,
+            rewards.totalClaimed,
+            rewards.pendingRewards,
+            rewards.loyaltyTier,
+            rewards.streakDays,
+            userProjectCounts[user]
         );
     }
     
     /**
-     * @dev Get all achievements
+     * @dev Get user's rewards by type
      */
-    function getAllAchievements() external view returns (Achievement[] memory) {
-        Achievement[] memory allAchievements = new Achievement[](achievementCounter);
-        for (uint256 i = 1; i <= achievementCounter; i++) {
-            allAchievements[i-1] = achievements[i];
-        }
-        return allAchievements;
+    function getUserRewardsByType(address user, RewardType rewardType) external view returns (uint256) {
+        return userRewards[user].rewardsByType[rewardType];
     }
     
     /**
-     * @dev Admin functions
+     * @dev Get user's referees
      */
-    function createAchievement(
-        AchievementType _type,
-        string memory _name,
-        string memory _description,
-        uint256 _rewardAmount,
-        uint256 _threshold
-    ) external onlyOwner {
-        _createAchievement(_type, _name, _description, _rewardAmount, _threshold, true);
+    function getUserReferees(address user) external view returns (address[] memory) {
+        return referees[user];
     }
     
-    function updateAchievement(
-        uint256 achievementId,
-        uint256 _rewardAmount,
-        uint256 _threshold,
-        bool _isActive
-    ) external onlyOwner {
-        Achievement storage achievement = achievements[achievementId];
-        achievement.rewardAmount = _rewardAmount;
-        achievement.threshold = _threshold;
-        achievement.isActive = _isActive;
+    /**
+     * @dev Check if user claimed daily reward today
+     */
+    function hasClaimedToday(address user) external view returns (bool) {
+        uint256 today = block.timestamp / 86400;
+        return dailyActivity[user][today];
     }
     
+    /**
+     * @dev Add authorized distributor
+     */
+    function addAuthorizedDistributor(address distributor) external onlyOwner {
+        authorizedDistributors[distributor] = true;
+    }
+    
+    /**
+     * @dev Remove authorized distributor
+     */
+    function removeAuthorizedDistributor(address distributor) external onlyOwner {
+        authorizedDistributors[distributor] = false;
+    }
+    
+    /**
+     * @dev Update reward pool allocation
+     */
+    function updateRewardPool(
+        RewardType rewardType,
+        uint256 totalAllocated,
+        uint256 rewardRate,
+        bool isActive
+    ) external onlyOwner {
+        RewardPool storage pool = rewardPools[rewardType];
+        require(totalAllocated >= pool.totalDistributed, "Cannot reduce below distributed");
+        
+        pool.totalAllocated = totalAllocated;
+        pool.rewardRate = rewardRate;
+        pool.isActive = isActive;
+        pool.lastUpdateTime = block.timestamp;
+    }
+    
+    /**
+     * @dev Update referral program parameters
+     */
     function updateReferralProgram(
-        uint256 _referrerReward,
-        uint256 _refereeReward,
-        uint256 _minProjectValue,
-        bool _isActive
+        uint256 referrerReward,
+        uint256 refereeReward,
+        uint256 minProjectsForReward,
+        uint256 maxReferrals,
+        bool isActive
     ) external onlyOwner {
-        referralProgram.referrerReward = _referrerReward;
-        referralProgram.refereeReward = _refereeReward;
-        referralProgram.minProjectValue = _minProjectValue;
-        referralProgram.isActive = _isActive;
+        referralProgram.referrerReward = referrerReward;
+        referralProgram.refereeReward = refereeReward;
+        referralProgram.minProjectsForReward = minProjectsForReward;
+        referralProgram.maxReferrals = maxReferrals;
+        referralProgram.isActive = isActive;
     }
     
     /**
-     * @dev Emergency withdraw
+     * @dev Update loyalty program parameters
      */
-    function emergencyWithdraw(uint256 amount) external onlyOwner {
-        skillToken.safeTransfer(owner(), amount);
+    function updateLoyaltyProgram(
+        uint256 baseMultiplier,
+        uint256 tierMultipliers,
+        uint256 streakBonus,
+        uint256 maxStreakBonus
+    ) external onlyOwner {
+        require(baseMultiplier >= 5000 && baseMultiplier <= 20000, "Invalid base multiplier");
+        require(maxStreakBonus <= 10000, "Max streak bonus too high");
+        
+        loyaltyProgram.baseMultiplier = baseMultiplier;
+        loyaltyProgram.tierMultipliers = tierMultipliers;
+        loyaltyProgram.streakBonus = streakBonus;
+        loyaltyProgram.maxStreakBonus = maxStreakBonus;
+    }
+    
+    /**
+     * @dev End seasonal campaign
+     */
+    function endSeasonalCampaign(uint256 campaignId) external onlyOwner {
+        seasonalCampaigns[campaignId].isActive = false;
+        seasonalCampaigns[campaignId].endTime = block.timestamp;
+    }
+    
+    /**
+     * @dev Emergency functions
+     */
+    function pause() external onlyOwner {
+        _pause();
+    }
+    
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+    
+    /**
+     * @dev Emergency reward distribution (only when paused)
+     */
+    function emergencyDistributeReward(
+        address user,
+        uint256 amount,
+        string memory reason
+    ) external onlyOwner whenPaused {
+        skillToken.mint(user, amount);
+        emit RewardEarned(user, RewardType.CommunityReward, amount, reason);
     }
 }
