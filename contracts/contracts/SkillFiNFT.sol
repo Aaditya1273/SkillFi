@@ -2,648 +2,556 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Burnable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/utils/Base64.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
+import "./SkillFiEscrow.sol";
+import "./SkillFiRewards.sol";
 
 /**
  * @title SkillFiNFT
- * @dev NFT contract for SkillFi achievements, certifications, and reputation badges
+ * @dev NFT system for achievements, certifications, and project completion certificates
  */
-contract SkillFiNFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable, Pausable {
+contract SkillFiNFT is ERC721, ERC721URIStorage, ERC721Burnable, Ownable, ReentrancyGuard {
     using Counters for Counters.Counter;
     using Strings for uint256;
     
     Counters.Counter private _tokenIds;
     
-    // Achievement types
-    enum AchievementType {
-        ProjectCompletion,    // 0 - Complete X projects
-        HighRating,          // 1 - Maintain high rating
-        EarningMilestone,    // 2 - Earn X SKILL tokens
-        SkillCertification,  // 3 - Skill-specific certification
-        CommunityContribution, // 4 - DAO participation
-        LoyaltyBadge,        // 5 - Platform loyalty
-        SpecialEvent         // 6 - Special events/campaigns
+    SkillFiEscrow public immutable escrow;
+    SkillFiRewards public immutable rewards;
+    
+    // NFT Types
+    enum NFTType {
+        ProjectCompletion,  // Certificate for completing a project
+        Achievement,        // Achievement badges
+        Skill,             // Skill certifications
+        Milestone,         // Special milestone NFTs
+        Reputation,        // Reputation level NFTs
+        Event              // Special event NFTs
     }
     
-    // Achievement tiers
-    enum AchievementTier {
-        Bronze,   // 0
-        Silver,   // 1
-        Gold,     // 2
-        Platinum, // 3
-        Diamond   // 4
+    // Rarity levels
+    enum Rarity {
+        Common,     // Bronze tier
+        Uncommon,   // Silver tier
+        Rare,       // Gold tier
+        Epic,       // Platinum tier
+        Legendary   // Diamond tier
     }
     
-    struct Achievement {
+    struct NFTMetadata {
         uint256 id;
-        AchievementType achievementType;
-        AchievementTier tier;
+        NFTType nftType;
+        Rarity rarity;
         string title;
         string description;
-        string skill; // For skill certifications
-        uint256 threshold; // Required value to earn
-        uint256 earnedAt;
-        address earner;
-        bool isActive;
-        string metadataURI;
+        uint256 projectId;
+        address recipient;
+        uint256 mintedAt;
+        uint256 value; // Project value or achievement score
+        string[] attributes;
+        bool isTransferable;
     }
     
-    struct UserStats {
-        uint256 totalAchievements;
+    struct SkillCertification {
+        string skillName;
+        uint256 level; // 1-10
         uint256 projectsCompleted;
-        uint256 totalEarned;
+        uint256 totalValue;
         uint256 averageRating;
-        uint256 daoParticipation;
-        mapping(AchievementType => uint256) achievementCounts;
-        mapping(string => bool) skillCertifications;
+        uint256 certifiedAt;
+        address certifier;
     }
     
-    mapping(uint256 => Achievement) public achievements;
-    mapping(address => UserStats) public userStats;
-    mapping(address => uint256[]) public userAchievements;
-    mapping(bytes32 => bool) public achievementExists; // Hash of type+tier+skill
+    mapping(uint256 => NFTMetadata) public nftMetadata;
+    mapping(address => mapping(string => SkillCertification)) public skillCertifications;
+    mapping(address => uint256[]) public userNFTs;
+    mapping(NFTType => uint256) public nftTypeCounts;
+    mapping(Rarity => string) public rarityColors;
     
-    // Authorized contracts that can mint achievements
-    mapping(address => bool) public authorizedMinters;
+    // Achievement tracking
+    mapping(address => mapping(SkillFiRewards.AchievementType => bool)) public achievementNFTMinted;
     
-    // Achievement templates
-    mapping(bytes32 => Achievement) public achievementTemplates;
-    
-    string private _baseTokenURI;
-    
-    event AchievementEarned(
-        address indexed user,
+    // Events
+    event NFTMinted(
         uint256 indexed tokenId,
-        AchievementType achievementType,
-        AchievementTier tier,
+        address indexed recipient,
+        NFTType nftType,
+        Rarity rarity,
         string title
     );
     
-    event AchievementTemplateCreated(
-        bytes32 indexed templateId,
-        AchievementType achievementType,
-        AchievementTier tier,
-        string title
-    );
-    
-    event UserStatsUpdated(
+    event SkillCertified(
         address indexed user,
-        uint256 projectsCompleted,
-        uint256 totalEarned,
-        uint256 averageRating
+        string skill,
+        uint256 level,
+        uint256 tokenId
     );
     
-    modifier onlyAuthorized() {
-        require(authorizedMinters[msg.sender] || msg.sender == owner(), "Not authorized to mint");
-        _;
-    }
-    
-    constructor(string memory baseURI) ERC721("SkillFi Achievement NFT", "SKILLNFT") {
-        _baseTokenURI = baseURI;
-        _initializeAchievementTemplates();
-    }
-    
-    /**
-     * @dev Initialize default achievement templates
-     */
-    function _initializeAchievementTemplates() internal {
-        // Project completion achievements
-        _createAchievementTemplate(
-            AchievementType.ProjectCompletion,
-            AchievementTier.Bronze,
-            "First Steps",
-            "Complete your first project on SkillFi",
-            "",
-            1
-        );
+    constructor(
+        address _escrow,
+        address _rewards
+    ) ERC721("SkillFi Certificates", "SKILLNFT") {
+        escrow = SkillFiEscrow(_escrow);
+        rewards = SkillFiRewards(_rewards);
         
-        _createAchievementTemplate(
-            AchievementType.ProjectCompletion,
-            AchievementTier.Silver,
-            "Getting Started",
-            "Complete 5 projects on SkillFi",
-            "",
-            5
-        );
-        
-        _createAchievementTemplate(
-            AchievementType.ProjectCompletion,
-            AchievementTier.Gold,
-            "Experienced Freelancer",
-            "Complete 25 projects on SkillFi",
-            "",
-            25
-        );
-        
-        _createAchievementTemplate(
-            AchievementType.ProjectCompletion,
-            AchievementTier.Platinum,
-            "Veteran Contributor",
-            "Complete 100 projects on SkillFi",
-            "",
-            100
-        );
-        
-        // High rating achievements
-        _createAchievementTemplate(
-            AchievementType.HighRating,
-            AchievementTier.Gold,
-            "Excellence Award",
-            "Maintain 4.8+ average rating with 10+ projects",
-            "",
-            48 // 4.8 * 10
-        );
-        
-        _createAchievementTemplate(
-            AchievementType.HighRating,
-            AchievementTier.Platinum,
-            "Perfect Reputation",
-            "Maintain 4.9+ average rating with 25+ projects",
-            "",
-            49 // 4.9 * 10
-        );
-        
-        // Earning milestones
-        _createAchievementTemplate(
-            AchievementType.EarningMilestone,
-            AchievementTier.Bronze,
-            "First Earnings",
-            "Earn your first 1,000 SKILL tokens",
-            "",
-            1000
-        );
-        
-        _createAchievementTemplate(
-            AchievementType.EarningMilestone,
-            AchievementTier.Silver,
-            "Rising Earner",
-            "Earn 10,000 SKILL tokens",
-            "",
-            10000
-        );
-        
-        _createAchievementTemplate(
-            AchievementType.EarningMilestone,
-            AchievementTier.Gold,
-            "High Earner",
-            "Earn 100,000 SKILL tokens",
-            "",
-            100000
-        );
-        
-        _createAchievementTemplate(
-            AchievementType.EarningMilestone,
-            AchievementTier.Diamond,
-            "Elite Earner",
-            "Earn 1,000,000 SKILL tokens",
-            "",
-            1000000
-        );
+        // Initialize rarity colors
+        rarityColors[Rarity.Common] = "#CD7F32";     // Bronze
+        rarityColors[Rarity.Uncommon] = "#C0C0C0";   // Silver
+        rarityColors[Rarity.Rare] = "#FFD700";       // Gold
+        rarityColors[Rarity.Epic] = "#E5E4E2";       // Platinum
+        rarityColors[Rarity.Legendary] = "#B9F2FF";  // Diamond
     }
     
     /**
-     * @dev Create achievement template
+     * @dev Mint project completion certificate
      */
-    function _createAchievementTemplate(
-        AchievementType achievementType,
-        AchievementTier tier,
-        string memory title,
-        string memory description,
-        string memory skill,
-        uint256 threshold
-    ) internal {
-        bytes32 templateId = keccak256(abi.encodePacked(achievementType, tier, skill));
+    function mintProjectCompletion(
+        uint256 projectId,
+        address recipient
+    ) external returns (uint256) {
+        require(msg.sender == address(escrow), "Only escrow can mint");
         
-        achievementTemplates[templateId] = Achievement({
-            id: 0,
-            achievementType: achievementType,
-            tier: tier,
-            title: title,
-            description: description,
-            skill: skill,
-            threshold: threshold,
-            earnedAt: 0,
-            earner: address(0),
-            isActive: true,
-            metadataURI: ""
-        });
-        
-        emit AchievementTemplateCreated(templateId, achievementType, tier, title);
-    }
-    
-    /**
-     * @dev Update user stats (called by authorized contracts)
-     */
-    function updateUserStats(
-        address user,
-        uint256 projectsCompleted,
-        uint256 totalEarned,
-        uint256 averageRating,
-        uint256 daoParticipation
-    ) external onlyAuthorized {
-        UserStats storage stats = userStats[user];
-        stats.projectsCompleted = projectsCompleted;
-        stats.totalEarned = totalEarned;
-        stats.averageRating = averageRating;
-        stats.daoParticipation = daoParticipation;
-        
-        emit UserStatsUpdated(user, projectsCompleted, totalEarned, averageRating);
-        
-        // Check for new achievements
-        _checkAndMintAchievements(user);
-    }
-    
-    /**
-     * @dev Check and mint eligible achievements
-     */
-    function _checkAndMintAchievements(address user) internal {
-        UserStats storage stats = userStats[user];
-        
-        // Check project completion achievements
-        _checkProjectCompletionAchievements(user, stats.projectsCompleted);
-        
-        // Check earning milestones
-        _checkEarningMilestones(user, stats.totalEarned);
-        
-        // Check high rating achievements
-        _checkHighRatingAchievements(user, stats.averageRating, stats.projectsCompleted);
-    }
-    
-    /**
-     * @dev Check project completion achievements
-     */
-    function _checkProjectCompletionAchievements(address user, uint256 projectsCompleted) internal {
-        uint256[] memory thresholds = new uint256[](4);
-        thresholds[0] = 1;   // Bronze
-        thresholds[1] = 5;   // Silver
-        thresholds[2] = 25;  // Gold
-        thresholds[3] = 100; // Platinum
-        
-        for (uint256 i = 0; i < thresholds.length; i++) {
-            if (projectsCompleted >= thresholds[i]) {
-                bytes32 templateId = keccak256(abi.encodePacked(
-                    AchievementType.ProjectCompletion,
-                    AchievementTier(i),
-                    ""
-                ));
-                
-                if (!_hasAchievement(user, templateId)) {
-                    _mintAchievementFromTemplate(user, templateId);
-                }
-            }
-        }
-    }
-    
-    /**
-     * @dev Check earning milestone achievements
-     */
-    function _checkEarningMilestones(address user, uint256 totalEarned) internal {
-        uint256[] memory thresholds = new uint256[](4);
-        thresholds[0] = 1000;     // Bronze
-        thresholds[1] = 10000;    // Silver
-        thresholds[2] = 100000;   // Gold
-        thresholds[3] = 1000000;  // Diamond
-        
-        AchievementTier[] memory tiers = new AchievementTier[](4);
-        tiers[0] = AchievementTier.Bronze;
-        tiers[1] = AchievementTier.Silver;
-        tiers[2] = AchievementTier.Gold;
-        tiers[3] = AchievementTier.Diamond;
-        
-        for (uint256 i = 0; i < thresholds.length; i++) {
-            if (totalEarned >= thresholds[i]) {
-                bytes32 templateId = keccak256(abi.encodePacked(
-                    AchievementType.EarningMilestone,
-                    tiers[i],
-                    ""
-                ));
-                
-                if (!_hasAchievement(user, templateId)) {
-                    _mintAchievementFromTemplate(user, templateId);
-                }
-            }
-        }
-    }
-    
-    /**
-     * @dev Check high rating achievements
-     */
-    function _checkHighRatingAchievements(address user, uint256 averageRating, uint256 projectsCompleted) internal {
-        // Excellence Award: 4.8+ rating with 10+ projects
-        if (averageRating >= 48 && projectsCompleted >= 10) {
-            bytes32 templateId = keccak256(abi.encodePacked(
-                AchievementType.HighRating,
-                AchievementTier.Gold,
-                ""
-            ));
-            
-            if (!_hasAchievement(user, templateId)) {
-                _mintAchievementFromTemplate(user, templateId);
-            }
-        }
-        
-        // Perfect Reputation: 4.9+ rating with 25+ projects
-        if (averageRating >= 49 && projectsCompleted >= 25) {
-            bytes32 templateId = keccak256(abi.encodePacked(
-                AchievementType.HighRating,
-                AchievementTier.Platinum,
-                ""
-            ));
-            
-            if (!_hasAchievement(user, templateId)) {
-                _mintAchievementFromTemplate(user, templateId);
-            }
-        }
-    }
-    
-    /**
-     * @dev Check if user has specific achievement
-     */
-    function _hasAchievement(address user, bytes32 templateId) internal view returns (bool) {
-        uint256[] memory userTokens = userAchievements[user];
-        Achievement memory template = achievementTemplates[templateId];
-        
-        for (uint256 i = 0; i < userTokens.length; i++) {
-            Achievement memory achievement = achievements[userTokens[i]];
-            if (achievement.achievementType == template.achievementType &&
-                achievement.tier == template.tier &&
-                keccak256(bytes(achievement.skill)) == keccak256(bytes(template.skill))) {
-                return true;
-            }
-        }
-        return false;
-    }
-    
-    /**
-     * @dev Mint achievement from template
-     */
-    function _mintAchievementFromTemplate(address user, bytes32 templateId) internal {
-        Achievement memory template = achievementTemplates[templateId];
-        require(template.isActive, "Template not active");
+        SkillFiEscrow.Project memory project = escrow.getProject(projectId);
+        require(project.status == SkillFiEscrow.ProjectStatus.Completed, "Project not completed");
+        require(
+            recipient == project.client || recipient == project.freelancer,
+            "Recipient not involved in project"
+        );
         
         _tokenIds.increment();
         uint256 tokenId = _tokenIds.current();
         
-        achievements[tokenId] = Achievement({
+        // Determine rarity based on project value
+        Rarity rarity = _determineProjectRarity(project.totalAmount);
+        
+        // Create metadata
+        string[] memory attributes = new string[](4);
+        attributes[0] = string(abi.encodePacked("Project Value: ", (project.totalAmount / 10**18).toString(), " SKILL"));
+        attributes[1] = string(abi.encodePacked("Role: ", recipient == project.client ? "Client" : "Freelancer"));
+        attributes[2] = string(abi.encodePacked("Skills: ", _arrayToString(project.skills)));
+        attributes[3] = string(abi.encodePacked("Completion Date: ", block.timestamp.toString()));
+        
+        nftMetadata[tokenId] = NFTMetadata({
             id: tokenId,
-            achievementType: template.achievementType,
-            tier: template.tier,
-            title: template.title,
-            description: template.description,
-            skill: template.skill,
-            threshold: template.threshold,
-            earnedAt: block.timestamp,
-            earner: user,
-            isActive: true,
-            metadataURI: _generateMetadataURI(template)
+            nftType: NFTType.ProjectCompletion,
+            rarity: rarity,
+            title: string(abi.encodePacked("Project Completion: ", project.title)),
+            description: string(abi.encodePacked("Certificate of completion for project: ", project.title)),
+            projectId: projectId,
+            recipient: recipient,
+            mintedAt: block.timestamp,
+            value: project.totalAmount,
+            attributes: attributes,
+            isTransferable: true
         });
         
-        userAchievements[user].push(tokenId);
-        userStats[user].totalAchievements++;
-        userStats[user].achievementCounts[template.achievementType]++;
+        _safeMint(recipient, tokenId);
+        _setTokenURI(tokenId, _generateTokenURI(tokenId));
         
-        _mint(user, tokenId);
-        _setTokenURI(tokenId, achievements[tokenId].metadataURI);
+        userNFTs[recipient].push(tokenId);
+        nftTypeCounts[NFTType.ProjectCompletion]++;
         
-        emit AchievementEarned(user, tokenId, template.achievementType, template.tier, template.title);
+        emit NFTMinted(tokenId, recipient, NFTType.ProjectCompletion, rarity, nftMetadata[tokenId].title);
+        
+        return tokenId;
+    }
+    
+    /**
+     * @dev Mint achievement NFT
+     */
+    function mintAchievement(
+        address recipient,
+        SkillFiRewards.AchievementType achievement
+    ) external returns (uint256) {
+        require(msg.sender == address(rewards), "Only rewards contract can mint");
+        require(!achievementNFTMinted[recipient][achievement], "Achievement NFT already minted");
+        
+        _tokenIds.increment();
+        uint256 tokenId = _tokenIds.current();
+        
+        achievementNFTMinted[recipient][achievement] = true;
+        
+        // Determine rarity and details based on achievement type
+        (Rarity rarity, string memory title, string memory description) = _getAchievementDetails(achievement);
+        
+        string[] memory attributes = new string[](3);
+        attributes[0] = string(abi.encodePacked("Achievement: ", title));
+        attributes[1] = string(abi.encodePacked("Earned Date: ", block.timestamp.toString()));
+        attributes[2] = "Type: Achievement Badge";
+        
+        nftMetadata[tokenId] = NFTMetadata({
+            id: tokenId,
+            nftType: NFTType.Achievement,
+            rarity: rarity,
+            title: title,
+            description: description,
+            projectId: 0,
+            recipient: recipient,
+            mintedAt: block.timestamp,
+            value: 0,
+            attributes: attributes,
+            isTransferable: false // Achievement NFTs are soulbound
+        });
+        
+        _safeMint(recipient, tokenId);
+        _setTokenURI(tokenId, _generateTokenURI(tokenId));
+        
+        userNFTs[recipient].push(tokenId);
+        nftTypeCounts[NFTType.Achievement]++;
+        
+        emit NFTMinted(tokenId, recipient, NFTType.Achievement, rarity, title);
+        
+        return tokenId;
     }
     
     /**
      * @dev Mint skill certification NFT
      */
     function mintSkillCertification(
-        address user,
-        string memory skill,
-        AchievementTier tier,
-        string memory certificationBody
-    ) external onlyAuthorized {
-        require(!userStats[user].skillCertifications[skill], "Already certified in this skill");
+        address recipient,
+        string memory skillName,
+        uint256 level,
+        uint256 projectsCompleted,
+        uint256 totalValue,
+        uint256 averageRating
+    ) external onlyOwner returns (uint256) {
+        require(level >= 1 && level <= 10, "Invalid skill level");
+        require(projectsCompleted > 0, "No projects completed");
         
         _tokenIds.increment();
         uint256 tokenId = _tokenIds.current();
         
-        string memory title = string(abi.encodePacked(skill, " Certification"));
-        string memory description = string(abi.encodePacked(
-            "Certified in ", skill, " by ", certificationBody
-        ));
-        
-        achievements[tokenId] = Achievement({
-            id: tokenId,
-            achievementType: AchievementType.SkillCertification,
-            tier: tier,
-            title: title,
-            description: description,
-            skill: skill,
-            threshold: 0,
-            earnedAt: block.timestamp,
-            earner: user,
-            isActive: true,
-            metadataURI: ""
+        // Store skill certification
+        skillCertifications[recipient][skillName] = SkillCertification({
+            skillName: skillName,
+            level: level,
+            projectsCompleted: projectsCompleted,
+            totalValue: totalValue,
+            averageRating: averageRating,
+            certifiedAt: block.timestamp,
+            certifier: msg.sender
         });
         
-        achievements[tokenId].metadataURI = _generateCertificationMetadata(achievements[tokenId]);
+        // Determine rarity based on level and performance
+        Rarity rarity = _determineSkillRarity(level, averageRating);
         
-        userAchievements[user].push(tokenId);
-        userStats[user].totalAchievements++;
-        userStats[user].achievementCounts[AchievementType.SkillCertification]++;
-        userStats[user].skillCertifications[skill] = true;
+        string[] memory attributes = new string[](6);
+        attributes[0] = string(abi.encodePacked("Skill: ", skillName));
+        attributes[1] = string(abi.encodePacked("Level: ", level.toString()));
+        attributes[2] = string(abi.encodePacked("Projects: ", projectsCompleted.toString()));
+        attributes[3] = string(abi.encodePacked("Total Value: ", (totalValue / 10**18).toString(), " SKILL"));
+        attributes[4] = string(abi.encodePacked("Average Rating: ", (averageRating / 10).toString(), ".", (averageRating % 10).toString()));
+        attributes[5] = string(abi.encodePacked("Certified Date: ", block.timestamp.toString()));
         
-        _mint(user, tokenId);
-        _setTokenURI(tokenId, achievements[tokenId].metadataURI);
+        nftMetadata[tokenId] = NFTMetadata({
+            id: tokenId,
+            nftType: NFTType.Skill,
+            rarity: rarity,
+            title: string(abi.encodePacked(skillName, " Certification - Level ", level.toString())),
+            description: string(abi.encodePacked("Official certification for ", skillName, " skill at level ", level.toString())),
+            projectId: 0,
+            recipient: recipient,
+            mintedAt: block.timestamp,
+            value: totalValue,
+            attributes: attributes,
+            isTransferable: true
+        });
         
-        emit AchievementEarned(user, tokenId, AchievementType.SkillCertification, tier, title);
-    }
-    
-    /**
-     * @dev Generate metadata URI for achievement
-     */
-    function _generateMetadataURI(Achievement memory achievement) internal pure returns (string memory) {
-        string memory tierName = _getTierName(achievement.tier);
-        string memory typeName = _getTypeName(achievement.achievementType);
+        _safeMint(recipient, tokenId);
+        _setTokenURI(tokenId, _generateTokenURI(tokenId));
         
-        string memory json = Base64.encode(
-            bytes(
-                string(
-                    abi.encodePacked(
-                        '{"name": "', achievement.title, '",',
-                        '"description": "', achievement.description, '",',
-                        '"image": "', _generateImageURI(achievement), '",',
-                        '"attributes": [',
-                        '{"trait_type": "Type", "value": "', typeName, '"},',
-                        '{"trait_type": "Tier", "value": "', tierName, '"},',
-                        '{"trait_type": "Earned At", "value": ', achievement.earnedAt.toString(), '},',
-                        '{"trait_type": "Threshold", "value": ', achievement.threshold.toString(), '}',
-                        ']}'
-                    )
-                )
-            )
-        );
+        userNFTs[recipient].push(tokenId);
+        nftTypeCounts[NFTType.Skill]++;
         
-        return string(abi.encodePacked("data:application/json;base64,", json));
-    }
-    
-    /**
-     * @dev Generate certification metadata
-     */
-    function _generateCertificationMetadata(Achievement memory achievement) internal pure returns (string memory) {
-        string memory tierName = _getTierName(achievement.tier);
+        emit NFTMinted(tokenId, recipient, NFTType.Skill, rarity, nftMetadata[tokenId].title);
+        emit SkillCertified(recipient, skillName, level, tokenId);
         
-        string memory json = Base64.encode(
-            bytes(
-                string(
-                    abi.encodePacked(
-                        '{"name": "', achievement.title, '",',
-                        '"description": "', achievement.description, '",',
-                        '"image": "', _generateCertificationImageURI(achievement), '",',
-                        '"attributes": [',
-                        '{"trait_type": "Type", "value": "Skill Certification"},',
-                        '{"trait_type": "Skill", "value": "', achievement.skill, '"},',
-                        '{"trait_type": "Tier", "value": "', tierName, '"},',
-                        '{"trait_type": "Earned At", "value": ', achievement.earnedAt.toString(), '}',
-                        ']}'
-                    )
-                )
-            )
-        );
-        
-        return string(abi.encodePacked("data:application/json;base64,", json));
+        return tokenId;
     }
     
     /**
-     * @dev Generate image URI for achievement
+     * @dev Mint special milestone NFT
      */
-    function _generateImageURI(Achievement memory achievement) internal pure returns (string memory) {
-        // This would typically point to IPFS or a CDN with achievement images
-        return string(abi.encodePacked(
-            "https://skillfi.io/achievements/",
-            _getTypeName(achievement.achievementType), "/",
-            _getTierName(achievement.tier), ".png"
-        ));
-    }
-    
-    /**
-     * @dev Generate image URI for certification
-     */
-    function _generateCertificationImageURI(Achievement memory achievement) internal pure returns (string memory) {
-        return string(abi.encodePacked(
-            "https://skillfi.io/certifications/",
-            achievement.skill, "/",
-            _getTierName(achievement.tier), ".png"
-        ));
-    }
-    
-    /**
-     * @dev Get tier name string
-     */
-    function _getTierName(AchievementTier tier) internal pure returns (string memory) {
-        if (tier == AchievementTier.Bronze) return "Bronze";
-        if (tier == AchievementTier.Silver) return "Silver";
-        if (tier == AchievementTier.Gold) return "Gold";
-        if (tier == AchievementTier.Platinum) return "Platinum";
-        if (tier == AchievementTier.Diamond) return "Diamond";
-        return "Unknown";
-    }
-    
-    /**
-     * @dev Get achievement type name string
-     */
-    function _getTypeName(AchievementType achievementType) internal pure returns (string memory) {
-        if (achievementType == AchievementType.ProjectCompletion) return "Project Completion";
-        if (achievementType == AchievementType.HighRating) return "High Rating";
-        if (achievementType == AchievementType.EarningMilestone) return "Earning Milestone";
-        if (achievementType == AchievementType.SkillCertification) return "Skill Certification";
-        if (achievementType == AchievementType.CommunityContribution) return "Community Contribution";
-        if (achievementType == AchievementType.LoyaltyBadge) return "Loyalty Badge";
-        if (achievementType == AchievementType.SpecialEvent) return "Special Event";
-        return "Unknown";
-    }
-    
-    /**
-     * @dev Get user's achievements
-     */
-    function getUserAchievements(address user) external view returns (uint256[] memory) {
-        return userAchievements[user];
-    }
-    
-    /**
-     * @dev Get user's achievement count by type
-     */
-    function getUserAchievementCount(address user, AchievementType achievementType) external view returns (uint256) {
-        return userStats[user].achievementCounts[achievementType];
-    }
-    
-    /**
-     * @dev Check if user has skill certification
-     */
-    function hasSkillCertification(address user, string memory skill) external view returns (bool) {
-        return userStats[user].skillCertifications[skill];
-    }
-    
-    /**
-     * @dev Add authorized minter
-     */
-    function addAuthorizedMinter(address minter) external onlyOwner {
-        authorizedMinters[minter] = true;
-    }
-    
-    /**
-     * @dev Remove authorized minter
-     */
-    function removeAuthorizedMinter(address minter) external onlyOwner {
-        authorizedMinters[minter] = false;
-    }
-    
-    /**
-     * @dev Create custom achievement template
-     */
-    function createAchievementTemplate(
-        AchievementType achievementType,
-        AchievementTier tier,
+    function mintMilestone(
+        address recipient,
         string memory title,
         string memory description,
-        string memory skill,
-        uint256 threshold
-    ) external onlyOwner {
-        _createAchievementTemplate(achievementType, tier, title, description, skill, threshold);
+        Rarity rarity,
+        string[] memory attributes
+    ) external onlyOwner returns (uint256) {
+        _tokenIds.increment();
+        uint256 tokenId = _tokenIds.current();
+        
+        nftMetadata[tokenId] = NFTMetadata({
+            id: tokenId,
+            nftType: NFTType.Milestone,
+            rarity: rarity,
+            title: title,
+            description: description,
+            projectId: 0,
+            recipient: recipient,
+            mintedAt: block.timestamp,
+            value: 0,
+            attributes: attributes,
+            isTransferable: true
+        });
+        
+        _safeMint(recipient, tokenId);
+        _setTokenURI(tokenId, _generateTokenURI(tokenId));
+        
+        userNFTs[recipient].push(tokenId);
+        nftTypeCounts[NFTType.Milestone]++;
+        
+        emit NFTMinted(tokenId, recipient, NFTType.Milestone, rarity, title);
+        
+        return tokenId;
     }
     
     /**
-     * @dev Set base URI for token metadata
+     * @dev Generate token URI with on-chain metadata
      */
-    function setBaseURI(string memory baseURI) external onlyOwner {
-        _baseTokenURI = baseURI;
+    function _generateTokenURI(uint256 tokenId) internal view returns (string memory) {
+        NFTMetadata memory metadata = nftMetadata[tokenId];
+        
+        string memory svg = _generateSVG(metadata);
+        string memory attributes = _generateAttributes(metadata);
+        
+        string memory json = Base64.encode(
+            bytes(
+                string(
+                    abi.encodePacked(
+                        '{"name": "', metadata.title, '",',
+                        '"description": "', metadata.description, '",',
+                        '"image": "data:image/svg+xml;base64,', Base64.encode(bytes(svg)), '",',
+                        '"attributes": [', attributes, ']}'
+                    )
+                )
+            )
+        );
+        
+        return string(abi.encodePacked("data:application/json;base64,", json));
     }
     
     /**
-     * @dev Pause contract
+     * @dev Generate SVG image for NFT
      */
-    function pause() external onlyOwner {
-        _pause();
+    function _generateSVG(NFTMetadata memory metadata) internal view returns (string memory) {
+        string memory rarityColor = rarityColors[metadata.rarity];
+        string memory nftTypeText = _getNFTTypeText(metadata.nftType);
+        string memory rarityText = _getRarityText(metadata.rarity);
+        
+        return string(
+            abi.encodePacked(
+                '<svg width="400" height="400" xmlns="http://www.w3.org/2000/svg">',
+                '<defs>',
+                '<linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">',
+                '<stop offset="0%" style="stop-color:#1a1a2e"/>',
+                '<stop offset="100%" style="stop-color:#16213e"/>',
+                '</linearGradient>',
+                '<linearGradient id="border" x1="0%" y1="0%" x2="100%" y2="100%">',
+                '<stop offset="0%" style="stop-color:', rarityColor, '"/>',
+                '<stop offset="100%" style="stop-color:', rarityColor, ';stop-opacity:0.7"/>',
+                '</linearGradient>',
+                '</defs>',
+                '<rect width="400" height="400" fill="url(#bg)"/>',
+                '<rect x="10" y="10" width="380" height="380" fill="none" stroke="url(#border)" stroke-width="4"/>',
+                '<text x="200" y="60" text-anchor="middle" fill="white" font-size="24" font-weight="bold">SkillFi</text>',
+                '<text x="200" y="100" text-anchor="middle" fill="', rarityColor, '" font-size="18">', nftTypeText, '</text>',
+                '<text x="200" y="130" text-anchor="middle" fill="', rarityColor, '" font-size="14">', rarityText, '</text>',
+                '<text x="200" y="200" text-anchor="middle" fill="white" font-size="16" font-weight="bold">', _truncateString(metadata.title, 25), '</text>',
+                '<text x="200" y="250" text-anchor="middle" fill="#cccccc" font-size="12">', _truncateString(metadata.description, 35), '</text>',
+                '<text x="200" y="320" text-anchor="middle" fill="#888888" font-size="10">Token ID: ', metadata.id.toString(), '</text>',
+                '<text x="200" y="340" text-anchor="middle" fill="#888888" font-size="10">Minted: ', _formatDate(metadata.mintedAt), '</text>',
+                '</svg>'
+            )
+        );
     }
     
     /**
-     * @dev Unpause contract
+     * @dev Generate JSON attributes for metadata
      */
-    function unpause() external onlyOwner {
-        _unpause();
+    function _generateAttributes(NFTMetadata memory metadata) internal pure returns (string memory) {
+        string memory baseAttributes = string(
+            abi.encodePacked(
+                '{"trait_type": "Type", "value": "', _getNFTTypeText(metadata.nftType), '"},',
+                '{"trait_type": "Rarity", "value": "', _getRarityText(metadata.rarity), '"},',
+                '{"trait_type": "Minted", "value": "', metadata.mintedAt.toString(), '"}'
+            )
+        );
+        
+        if (metadata.value > 0) {
+            baseAttributes = string(
+                abi.encodePacked(
+                    baseAttributes,
+                    ',{"trait_type": "Value", "value": "', (metadata.value / 10**18).toString(), ' SKILL"}'
+                )
+            );
+        }
+        
+        // Add custom attributes
+        for (uint i = 0; i < metadata.attributes.length; i++) {
+            if (bytes(metadata.attributes[i]).length > 0) {
+                baseAttributes = string(
+                    abi.encodePacked(
+                        baseAttributes,
+                        ',{"trait_type": "Info", "value": "', metadata.attributes[i], '"}'
+                    )
+                );
+            }
+        }
+        
+        return baseAttributes;
     }
     
-    // Override required functions
+    /**
+     * @dev Determine project completion rarity based on value
+     */
+    function _determineProjectRarity(uint256 projectValue) internal pure returns (Rarity) {
+        uint256 valueInSkill = projectValue / 10**18;
+        
+        if (valueInSkill >= 100000) return Rarity.Legendary;  // 100k+ SKILL
+        if (valueInSkill >= 50000) return Rarity.Epic;        // 50k+ SKILL
+        if (valueInSkill >= 10000) return Rarity.Rare;        // 10k+ SKILL
+        if (valueInSkill >= 1000) return Rarity.Uncommon;     // 1k+ SKILL
+        return Rarity.Common;                                  // < 1k SKILL
+    }
+    
+    /**
+     * @dev Determine skill certification rarity
+     */
+    function _determineSkillRarity(uint256 level, uint256 averageRating) internal pure returns (Rarity) {
+        if (level >= 9 && averageRating >= 48) return Rarity.Legendary; // Level 9-10, 4.8+ rating
+        if (level >= 7 && averageRating >= 45) return Rarity.Epic;      // Level 7-8, 4.5+ rating
+        if (level >= 5 && averageRating >= 40) return Rarity.Rare;      // Level 5-6, 4.0+ rating
+        if (level >= 3 && averageRating >= 35) return Rarity.Uncommon;  // Level 3-4, 3.5+ rating
+        return Rarity.Common;                                            // Level 1-2 or low rating
+    }
+    
+    /**
+     * @dev Get achievement details
+     */
+    function _getAchievementDetails(SkillFiRewards.AchievementType achievement) internal pure returns (
+        Rarity rarity,
+        string memory title,
+        string memory description
+    ) {
+        if (achievement == SkillFiRewards.AchievementType.FirstProject) {
+            return (Rarity.Common, "First Steps", "Completed your first project on SkillFi");
+        } else if (achievement == SkillFiRewards.AchievementType.ProjectStreak) {
+            return (Rarity.Uncommon, "Streak Master", "Completed 10 projects in a row");
+        } else if (achievement == SkillFiRewards.AchievementType.HighRating) {
+            return (Rarity.Rare, "Excellence", "Maintained 4.8+ average rating");
+        } else if (achievement == SkillFiRewards.AchievementType.VolumeTrader) {
+            return (Rarity.Epic, "High Roller", "Earned over 100,000 SKILL tokens");
+        } else if (achievement == SkillFiRewards.AchievementType.CommunityHelper) {
+            return (Rarity.Rare, "Community Builder", "Referred 50+ users to SkillFi");
+        } else if (achievement == SkillFiRewards.AchievementType.EarlyAdopter) {
+            return (Rarity.Legendary, "Pioneer", "Early adopter of SkillFi platform");
+        } else if (achievement == SkillFiRewards.AchievementType.Specialist) {
+            return (Rarity.Epic, "Specialist", "Master of specialized skills");
+        } else if (achievement == SkillFiRewards.AchievementType.Mentor) {
+            return (Rarity.Legendary, "Mentor", "Guided and mentored other users");
+        }
+        
+        return (Rarity.Common, "Achievement", "Special achievement unlocked");
+    }
+    
+    /**
+     * @dev Helper functions
+     */
+    function _getNFTTypeText(NFTType nftType) internal pure returns (string memory) {
+        if (nftType == NFTType.ProjectCompletion) return "Project Certificate";
+        if (nftType == NFTType.Achievement) return "Achievement Badge";
+        if (nftType == NFTType.Skill) return "Skill Certification";
+        if (nftType == NFTType.Milestone) return "Milestone Badge";
+        if (nftType == NFTType.Reputation) return "Reputation Badge";
+        if (nftType == NFTType.Event) return "Event Badge";
+        return "Certificate";
+    }
+    
+    function _getRarityText(Rarity rarity) internal pure returns (string memory) {
+        if (rarity == Rarity.Common) return "Common";
+        if (rarity == Rarity.Uncommon) return "Uncommon";
+        if (rarity == Rarity.Rare) return "Rare";
+        if (rarity == Rarity.Epic) return "Epic";
+        if (rarity == Rarity.Legendary) return "Legendary";
+        return "Unknown";
+    }
+    
+    function _arrayToString(string[] memory array) internal pure returns (string memory) {
+        if (array.length == 0) return "";
+        
+        string memory result = array[0];
+        for (uint i = 1; i < array.length && i < 3; i++) { // Limit to 3 skills
+            result = string(abi.encodePacked(result, ", ", array[i]));
+        }
+        return result;
+    }
+    
+    function _truncateString(string memory str, uint256 maxLength) internal pure returns (string memory) {
+        bytes memory strBytes = bytes(str);
+        if (strBytes.length <= maxLength) return str;
+        
+        bytes memory truncated = new bytes(maxLength - 3);
+        for (uint i = 0; i < maxLength - 3; i++) {
+            truncated[i] = strBytes[i];
+        }
+        return string(abi.encodePacked(truncated, "..."));
+    }
+    
+    function _formatDate(uint256 timestamp) internal pure returns (string memory) {
+        // Simple date formatting (just return timestamp for now)
+        return timestamp.toString();
+    }
+    
+    /**
+     * @dev Override transfer functions for soulbound tokens
+     */
     function _beforeTokenTransfer(
         address from,
         address to,
         uint256 tokenId,
         uint256 batchSize
-    ) internal override(ERC721, ERC721Enumerable) whenNotPaused {
+    ) internal override {
         super._beforeTokenTransfer(from, to, tokenId, batchSize);
+        
+        // Allow minting and burning
+        if (from == address(0) || to == address(0)) return;
+        
+        // Check if token is transferable
+        require(nftMetadata[tokenId].isTransferable, "Token is soulbound");
     }
     
+    /**
+     * @dev Get user's NFTs
+     */
+    function getUserNFTs(address user) external view returns (uint256[] memory) {
+        return userNFTs[user];
+    }
+    
+    /**
+     * @dev Get NFT metadata
+     */
+    function getNFTMetadata(uint256 tokenId) external view returns (NFTMetadata memory) {
+        return nftMetadata[tokenId];
+    }
+    
+    /**
+     * @dev Get skill certification
+     */
+    function getSkillCertification(address user, string memory skill) external view returns (SkillCertification memory) {
+        return skillCertifications[user][skill];
+    }
+    
+    /**
+     * @dev Override required functions
+     */
     function _burn(uint256 tokenId) internal override(ERC721, ERC721URIStorage) {
         super._burn(tokenId);
     }
@@ -652,7 +560,7 @@ contract SkillFiNFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable, Paus
         return super.tokenURI(tokenId);
     }
     
-    function supportsInterface(bytes4 interfaceId) public view override(ERC721, ERC721Enumerable, ERC721URIStorage) returns (bool) {
+    function supportsInterface(bytes4 interfaceId) public view override(ERC721, ERC721URIStorage) returns (bool) {
         return super.supportsInterface(interfaceId);
     }
 }
