@@ -1,0 +1,132 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  walletAddress String? @unique
+  username    String   @unique
+  firstName   String?
+  lastName    String?
+  bio         String?
+  avatar      String?
+  skills      String[]
+  hourlyRate  Float?
+  location    String?
+  timezone    String?
+  isVerified  Boolean  @default(false)
+  reputation  Float    @default(0)
+  totalEarned Float    @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  clientProjects    Project[]    @relation("ClientProjects")
+  freelancerProjects Project[]   @relation("FreelancerProjects")
+  proposals         Proposal[]
+  sentMessages      Message[]    @relation("SentMessages")
+  receivedMessages  Message[]    @relation("ReceivedMessages")
+  reviews           Review[]     @relation("ReviewAuthor")
+  receivedReviews   Review[]     @relation("ReviewTarget")
+
+  @@map("users")
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  title       String
+  description String
+  budget      Float
+  deadline    DateTime?
+  status      ProjectStatus @default(OPEN)
+  skills      String[]
+  category    String?
+  clientId    String
+  freelancerId String?
+  contractAddress String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relations
+  client      User       @relation("ClientProjects", fields: [clientId], references: [id])
+  freelancer  User?      @relation("FreelancerProjects", fields: [freelancerId], references: [id])
+  proposals   Proposal[]
+  messages    Message[]
+  reviews     Review[]
+
+  @@map("projects")
+}
+
+model Proposal {
+  id          String         @id @default(cuid())
+  projectId   String
+  freelancerId String
+  bidAmount   Float
+  description String
+  deliveryTime Int           // in days
+  status      ProposalStatus @default(PENDING)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  // Relations
+  project     Project @relation(fields: [projectId], references: [id])
+  freelancer  User    @relation(fields: [freelancerId], references: [id])
+
+  @@unique([projectId, freelancerId])
+  @@map("proposals")
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  projectId String
+  senderId  String
+  receiverId String
+  content   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  // Relations
+  project  Project @relation(fields: [projectId], references: [id])
+  sender   User    @relation("SentMessages", fields: [senderId], references: [id])
+  receiver User    @relation("ReceivedMessages", fields: [receiverId], references: [id])
+
+  @@map("messages")
+}
+
+model Review {
+  id         String @id @default(cuid())
+  projectId  String
+  authorId   String
+  targetId   String
+  rating     Int    // 1-5
+  comment    String?
+  createdAt  DateTime @default(now())
+
+  // Relations
+  project Project @relation(fields: [projectId], references: [id])
+  author  User    @relation("ReviewAuthor", fields: [authorId], references: [id])
+  target  User    @relation("ReviewTarget", fields: [targetId], references: [id])
+
+  @@unique([projectId, authorId])
+  @@map("reviews")
+}
+
+enum ProjectStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum ProposalStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
