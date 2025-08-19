@@ -1,0 +1,310 @@
+type User {
+  id: ID!
+  email: String!
+  username: String!
+  firstName: String
+  lastName: String
+  fullName: String
+  avatar: String
+  userType: [UserType!]!
+  isVerified: Boolean!
+  walletAddress: String
+  reputation: Float
+  location: Location
+  settings: UserSettings
+  freelancerProfile: FreelancerProfile
+  clientProfile: ClientProfile
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type FreelancerProfile {
+  id: ID!
+  userId: ID!
+  title: String!
+  bio: String!
+  skills: [Skill!]!
+  hourlyRate: Float!
+  experienceLevel: ExperienceLevel!
+  categories: [Category!]!
+  portfolio: [PortfolioItem!]!
+  availability: Availability
+  completedProjects: Int!
+  totalEarned: Float!
+  reputation: Float!
+  totalReviews: Int!
+  isActive: Boolean!
+  isAvailable: Boolean!
+  profileCompleteness: Int!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type ClientProfile {
+  id: ID!
+  userId: ID!
+  companyName: String!
+  companySize: CompanySize!
+  industry: String!
+  description: String
+  website: String
+  totalSpent: Float!
+  projectsPosted: Int!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type Skill {
+  name: String!
+  level: SkillLevel!
+  yearsOfExperience: Int
+  verified: Boolean!
+  endorsements: Int!
+}
+
+type PortfolioItem {
+  id: ID!
+  title: String!
+  description: String!
+  technologies: [String!]!
+  url: String
+  imageUrl: String
+  completedAt: DateTime
+  clientFeedback: ClientFeedback
+}
+
+type ClientFeedback {
+  rating: Float!
+  comment: String
+}
+
+type Availability {
+  hoursPerWeek: Int!
+  timezone: String!
+  preferredWorkingHours: WorkingHours
+  availableDays: [WeekDay!]!
+  startDate: DateTime
+  isAvailable: Boolean!
+}
+
+type WorkingHours {
+  start: String!
+  end: String!
+}
+
+type Location {
+  country: String
+  city: String
+  timezone: String
+  isRemoteOnly: Boolean!
+}
+
+type UserSettings {
+  notifications: NotificationSettings!
+  preferences: UserPreferences!
+}
+
+type NotificationSettings {
+  email: Boolean!
+  push: Boolean!
+  sms: Boolean!
+}
+
+type UserPreferences {
+  language: String!
+  timezone: String!
+  currency: String!
+}
+
+enum UserType {
+  FREELANCER
+  CLIENT
+  BOTH
+}
+
+enum ExperienceLevel {
+  ENTRY
+  JUNIOR
+  MID
+  SENIOR
+  EXPERT
+}
+
+enum SkillLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+enum CompanySize {
+  STARTUP
+  SMALL
+  MEDIUM
+  LARGE
+  ENTERPRISE
+}
+
+enum Category {
+  WEB_DEVELOPMENT
+  MOBILE_DEVELOPMENT
+  BLOCKCHAIN
+  AI_ML
+  DATA_SCIENCE
+  DESIGN
+  MARKETING
+  WRITING
+  CONSULTING
+  OTHER
+}
+
+enum WeekDay {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+input UserInput {
+  firstName: String
+  lastName: String
+  bio: String
+  location: LocationInput
+}
+
+input LocationInput {
+  country: String
+  city: String
+  timezone: String
+  isRemoteOnly: Boolean
+}
+
+input FreelancerProfileInput {
+  title: String!
+  bio: String!
+  skills: [SkillInput!]!
+  hourlyRate: Float!
+  experienceLevel: ExperienceLevel!
+  categories: [Category!]!
+  availability: AvailabilityInput
+}
+
+input SkillInput {
+  name: String!
+  level: SkillLevel!
+  yearsOfExperience: Int
+}
+
+input AvailabilityInput {
+  hoursPerWeek: Int!
+  timezone: String!
+  preferredWorkingHours: WorkingHoursInput
+  availableDays: [WeekDay!]!
+  startDate: DateTime
+  isAvailable: Boolean!
+}
+
+input WorkingHoursInput {
+  start: String!
+  end: String!
+}
+
+input ClientProfileInput {
+  companyName: String!
+  companySize: CompanySize!
+  industry: String!
+  description: String
+  website: String
+}
+
+input UserSettingsInput {
+  notifications: NotificationSettingsInput
+  preferences: UserPreferencesInput
+}
+
+input NotificationSettingsInput {
+  email: Boolean
+  push: Boolean
+  sms: Boolean
+}
+
+input UserPreferencesInput {
+  language: String
+  timezone: String
+  currency: String
+}
+
+type Query {
+  # User queries
+  me: User
+  user(id: ID!): User
+  users(
+    search: String
+    skills: [String!]
+    category: Category
+    experienceLevel: ExperienceLevel
+    minRate: Float
+    maxRate: Float
+    location: String
+    page: Int = 1
+    limit: Int = 20
+  ): UserConnection!
+  
+  # Freelancer queries
+  freelancers(
+    skills: [String!]
+    category: Category
+    experienceLevel: ExperienceLevel
+    minRate: Float
+    maxRate: Float
+    location: String
+    availability: Boolean
+    page: Int = 1
+    limit: Int = 20
+  ): FreelancerConnection!
+}
+
+type Mutation {
+  # User mutations
+  updateProfile(input: UserInput!): User!
+  updateFreelancerProfile(input: FreelancerProfileInput!): FreelancerProfile!
+  updateClientProfile(input: ClientProfileInput!): ClientProfile!
+  updateUserSettings(input: UserSettingsInput!): User!
+  connectWallet(walletAddress: String!, signature: String!): User!
+  uploadAvatar(file: Upload!): User!
+}
+
+type UserConnection {
+  edges: [UserEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type UserEdge {
+  node: User!
+  cursor: String!
+}
+
+type FreelancerConnection {
+  edges: [FreelancerEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type FreelancerEdge {
+  node: FreelancerProfile!
+  cursor: String!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+scalar DateTime
+scalar Upload
