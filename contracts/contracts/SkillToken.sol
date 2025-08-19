@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 
@@ -11,7 +12,8 @@ import "@openzeppelin/contracts/security/Pausable.sol";
  * @title SkillToken
  * @dev ERC20 token for the SkillFi platform with governance features
  */
-contract SkillToken is ERC20, ERC20Burnable, ERC20Permit, Ownable, Pausable {
+contract SkillToken is ERC20, ERC20Burnable, ERC20Permit, ERC20Votes, Ownable, Pausable {
+
     uint256 public constant MAX_SUPPLY = 1_000_000_000 * 10**18; // 1 billion tokens
     uint256 public constant INITIAL_SUPPLY = 100_000_000 * 10**18; // 100 million tokens
     
@@ -121,5 +123,30 @@ contract SkillToken is ERC20, ERC20Burnable, ERC20Permit, Ownable, Pausable {
         uint256 amount
     ) internal override whenNotPaused {
         super._beforeTokenTransfer(from, to, amount);
+    }
+
+    /**
+     * @dev Required overrides for ERC20Votes to track voting power.
+     */
+    function _afterTokenTransfer(
+        address from,
+        address to,
+        uint256 amount
+    ) internal override(ERC20, ERC20Votes) {
+        super._afterTokenTransfer(from, to, amount);
+    }
+
+    function _mint(address to, uint256 amount)
+        internal
+        override(ERC20, ERC20Votes)
+    {
+        super._mint(to, amount);
+    }
+
+    function _burn(address account, uint256 amount)
+        internal
+        override(ERC20, ERC20Votes)
+    {
+        super._burn(account, amount);
     }
 }

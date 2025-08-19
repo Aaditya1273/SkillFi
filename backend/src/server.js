@@ -12,6 +12,11 @@ const projectRoutes = require('./routes/projects');
 const proposalRoutes = require('./routes/proposals');
 const messageRoutes = require('./routes/messages');
 const contractRoutes = require('./routes/contracts');
+const ratingRoutes = require('./routes/ratings');
+const reputationRoutes = require('./routes/reputation');
+const onchainListeners = require('./services/onchainListeners');
+const disputeRoutes = require('./routes/disputes');
+const referralRoutes = require('./routes/referrals');
 
 const app = express();
 const server = createServer(app);
@@ -45,6 +50,10 @@ app.use('/api/projects', projectRoutes);
 app.use('/api/proposals', proposalRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/contracts', contractRoutes);
+app.use('/api/ratings', ratingRoutes);
+app.use('/api/reputation', reputationRoutes);
+app.use('/api/disputes', disputeRoutes);
+app.use('/api/referrals', referralRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -87,4 +96,19 @@ const PORT = process.env.PORT || 8000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  // Optionally start on-chain listeners
+  if (process.env.ONCHAIN_LISTENERS === '1') {
+    const rpcUrl = process.env.RPC_URL;
+    const contractAddress = process.env.MARKETPLACE_CONTRACT_ADDRESS;
+    const started = onchainListeners.start({ rpcUrl, contractAddress });
+    if (!rpcUrl || !contractAddress) {
+      console.warn('[server] ONCHAIN_LISTENERS=1 but RPC_URL or MARKETPLACE_CONTRACT_ADDRESS missing');
+    }
+    if (started) {
+      process.on('SIGINT', () => {
+        started.stop();
+        process.exit(0);
+      });
+    }
+  }
 });

@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { InternalAxiosRequestConfig, AxiosResponse } from 'axios';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 
@@ -10,18 +10,18 @@ const api = axios.create({
 });
 
 // Request interceptor to add auth token
-api.interceptors.request.use((config) => {
+api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = localStorage.getItem('token');
   if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+    config.headers.set('Authorization', `Bearer ${token}`);
   }
   return config;
 });
 
 // Response interceptor for error handling
 api.interceptors.response.use(
-  (response) => response,
-  (error) => {
+  (response: AxiosResponse) => response,
+  (error: any) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
       window.location.href = '/auth/signin';
@@ -78,6 +78,11 @@ export const contractsAPI = {
   acceptProposal: (data: any) => api.post('/contracts/accept-proposal', data),
   completeProject: (data: any) => api.post('/contracts/complete-project', data),
   getProject: (blockchainId: string) => api.get(`/contracts/project/${blockchainId}`),
+};
+
+// Disputes API
+export const disputesAPI = {
+  analyze: (projectId: string) => api.post('/disputes/analyze', { projectId }),
 };
 
 export default api;

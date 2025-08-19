@@ -1,0 +1,137 @@
+[
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "disputeId", "type": "uint256" }
+    ],
+    "name": "getDispute",
+    "outputs": [
+      {
+        "components": [
+          { "internalType": "uint256", "name": "projectId", "type": "uint256" },
+          { "internalType": "address", "name": "client", "type": "address" },
+          { "internalType": "address", "name": "freelancer", "type": "address" },
+          { "internalType": "uint256", "name": "amount", "type": "uint256" },
+          { "internalType": "string", "name": "reason", "type": "string" },
+          { "internalType": "uint256", "name": "createdAt", "type": "uint256" },
+          { "internalType": "bool", "name": "resolved", "type": "bool" },
+          { "internalType": "address", "name": "winner", "type": "address" },
+          { "internalType": "uint256", "name": "votingDeadline", "type": "uint256" }
+        ],
+        "internalType": "struct SkillFiDAO.Dispute",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "disputeId", "type": "uint256" }
+    ],
+    "name": "getDisputeVotes",
+    "outputs": [
+      { "internalType": "uint256", "name": "clientVotes", "type": "uint256" },
+      { "internalType": "uint256", "name": "freelancerVotes", "type": "uint256" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "disputeId", "type": "uint256" },
+      { "internalType": "bool", "name": "supportsClient", "type": "bool" }
+    ],
+    "name": "voteOnDispute",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "address[]", "name": "targets", "type": "address[]" },
+      { "internalType": "uint256[]", "name": "values", "type": "uint256[]" },
+      { "internalType": "bytes[]", "name": "calldatas", "type": "bytes[]" },
+      { "internalType": "string", "name": "description", "type": "string" }
+    ],
+    "name": "propose",
+    "outputs": [
+      { "internalType": "uint256", "name": "proposalId", "type": "uint256" }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "proposalId", "type": "uint256" }
+    ],
+    "name": "state",
+    "outputs": [ { "internalType": "uint8", "name": "", "type": "uint8" } ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "proposalId", "type": "uint256" },
+      { "internalType": "uint8", "name": "support", "type": "uint8" },
+      { "internalType": "string", "name": "reason", "type": "string" }
+    ],
+    "name": "castVoteWithReason",
+    "outputs": [ { "internalType": "uint256", "name": "", "type": "uint256" } ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "token",
+    "outputs": [ { "internalType": "address", "name": "", "type": "address" } ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": false, "internalType": "uint256", "name": "proposalId", "type": "uint256" },
+      { "indexed": true, "internalType": "address", "name": "proposer", "type": "address" },
+      { "indexed": false, "internalType": "address[]", "name": "targets", "type": "address[]" },
+      { "indexed": false, "internalType": "uint256[]", "name": "values", "type": "uint256[]" },
+      { "indexed": false, "internalType": "bytes[]", "name": "calldatas", "type": "bytes[]" },
+      { "indexed": false, "internalType": "uint256", "name": "startBlock", "type": "uint256" },
+      { "indexed": false, "internalType": "uint256", "name": "endBlock", "type": "uint256" },
+      { "indexed": false, "internalType": "string", "name": "description", "type": "string" }
+    ],
+    "name": "ProposalCreated",
+    "type": "event"
+  },
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "proposalId", "type": "uint256" }
+    ],
+    "name": "proposalVotes",
+    "outputs": [
+      { "internalType": "uint256", "name": "againstVotes", "type": "uint256" },
+      { "internalType": "uint256", "name": "forVotes", "type": "uint256" },
+      { "internalType": "uint256", "name": "abstainVotes", "type": "uint256" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "proposalId", "type": "uint256" }
+    ],
+    "name": "proposalSnapshot",
+    "outputs": [ { "internalType": "uint256", "name": "", "type": "uint256" } ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "proposalId", "type": "uint256" }
+    ],
+    "name": "proposalDeadline",
+    "outputs": [ { "internalType": "uint256", "name": "", "type": "uint256" } ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]
