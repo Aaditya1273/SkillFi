@@ -129,6 +129,7 @@ model Project {
   proposals   Proposal[]
   messages    Message[]
   reviews     Review[]
+  ratings     Rating[]
 
   @@map("projects")
 }

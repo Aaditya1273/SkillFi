@@ -1,15 +1,17 @@
-import { Hero } from '@/components/home/Hero';
-import { FeaturedProjects } from '@/components/home/FeaturedProjects';
-import { HowItWorks } from '@/components/home/HowItWorks';
-import { Stats } from '@/components/home/Stats';
+import LandingHero from '@/components/landing/LandingHero';
+import FeatureGrid from '@/components/landing/FeatureGrid';
+import Showcase from '@/components/landing/Showcase';
+import TrustLogos from '@/components/landing/TrustLogos';
+import CTA from '@/components/landing/CTA';
 
 export default function HomePage() {
   return (
-    <div>
-      <Hero />
-      <Stats />
-      <FeaturedProjects />
-      <HowItWorks />
-    </div>
+    <main>
+      <LandingHero />
+      <FeatureGrid />
+      <Showcase />
+      <TrustLogos />
+      <CTA />
+    </main>
   );
 }
