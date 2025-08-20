@@ -2,9 +2,23 @@
 
 import { useState, useEffect } from 'react';
 
+// Types
+type Timeframe = 'all' | 'month' | 'week';
+
+type LeaderboardUser = {
+  id: string | number;
+  username: string;
+  avatar?: string | null;
+  referralCount: number;
+};
+
+type LeaderboardResponse = {
+  leaderboard: LeaderboardUser[];
+};
+
 const Leaderboard = () => {
-  const [leaderboard, setLeaderboard] = useState([]);
-  const [timeframe, setTimeframe] = useState('all');
+  const [leaderboard, setLeaderboard] = useState<LeaderboardUser[]>([]);
+  const [timeframe, setTimeframe] = useState<Timeframe>('all');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -16,10 +30,10 @@ const Leaderboard = () => {
         if (!response.ok) {
           throw new Error('Failed to fetch leaderboard');
         }
-        const data = await response.json();
-        setLeaderboard(data.leaderboard);
+        const data = (await response.json()) as LeaderboardResponse;
+        setLeaderboard(data.leaderboard ?? []);
       } catch (err) {
-        setError(err.message);
+        setError(err instanceof Error ? err.message : String(err));
       } finally {
         setIsLoading(false);
       }
@@ -37,7 +51,9 @@ const Leaderboard = () => {
         <h2 className="text-2xl font-bold">Top Referrers</h2>
         <select 
           value={timeframe}
-          onChange={(e) => setTimeframe(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+            setTimeframe(e.target.value as Timeframe)
+          }
           className="bg-gray-700 border border-gray-600 rounded px-2 py-1"
         >
           <option value="all">All Time</option>

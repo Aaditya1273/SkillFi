@@ -4,11 +4,9 @@ import GoogleProvider from 'next-auth/providers/google';
 import GitHubProvider from 'next-auth/providers/github';
 import LinkedInProvider from 'next-auth/providers/linkedin';
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import { SiweMessage } from 'siwe';
-
-const prisma = new PrismaClient();
 
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
@@ -52,6 +50,50 @@ export const authOptions: NextAuthOptions = {
           };
         } catch (error) {
           console.error('Auth error:', error);
+          return null;
+        }
+      }
+    }),
+
+    // Email + OTP Authentication
+    CredentialsProvider({
+      id: 'email-otp',
+      name: 'email-otp',
+      credentials: {
+        email: { label: 'Email', type: 'email' },
+        otp: { label: 'OTP', type: 'text' }
+      },
+      async authorize(credentials: { email: string; otp: string } | undefined) {
+        if (!credentials?.email || !credentials?.otp) {
+          return null;
+        }
+
+        try {
+          const response = await fetch(`${process.env.AUTH_SERVICE_URL}/api/auth/otp/verify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: credentials.email,
+              otp: credentials.otp
+            })
+          });
+
+          if (!response.ok) {
+            return null;
+          }
+
+          const data = await response.json();
+          return {
+            id: data.user.id,
+            email: data.user.email,
+            username: data.user.username,
+            walletAddress: data.user.walletAddress,
+            firstName: data.user.firstName,
+            lastName: data.user.lastName,
+            image: data.user.avatar
+          };
+        } catch (error) {
+          console.error('OTP auth error:', error);
           return null;
         }
       }

@@ -15,6 +15,9 @@ export default function SignInPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [authMethod, setAuthMethod] = useState<'email' | 'wallet' | 'social'>('email');
+  const [otpMode, setOtpMode] = useState(false);
+  const [otp, setOtp] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
 
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -63,6 +66,57 @@ export default function SignInPage() {
       }
     } catch (error) {
       toast.error('Sign in failed');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const sendOtp = async () => {
+    if (!formData.email) {
+      toast.error('Please enter your email');
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/auth/otp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: formData.email }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({} as any));
+        throw new Error(err?.message || 'Failed to send OTP');
+      }
+      setOtpSent(true);
+      toast.success('OTP sent to your email');
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to send OTP');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleOtpSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.email || !otp) {
+      toast.error('Enter email and OTP');
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const result = await signIn('email-otp', {
+        email: formData.email,
+        otp,
+        redirect: false,
+      });
+      if (result?.error) {
+        toast.error('Invalid OTP');
+      } else {
+        toast.success('Signed in successfully');
+        router.push(callbackUrl);
+      }
+    } catch (error) {
+      toast.error('OTP sign-in failed');
     } finally {
       setIsLoading(false);
     }
@@ -192,7 +246,7 @@ export default function SignInPage() {
 
           {/* Email Sign In */}
           {authMethod === 'email' && (
-            <form onSubmit={handleEmailSignIn} className="space-y-6">
+            <div className="space-y-6">
               <div>
                 <label htmlFor="email" className="sr-only">
                   Email address
@@ -209,55 +263,114 @@ export default function SignInPage() {
                   placeholder="Email address"
                 />
               </div>
-              <div className="relative">
-                <label htmlFor="password" className="sr-only">
-                  Password
-                </label>
-                <input
-                  id="password"
-                  name="password"
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="current-password"
-                  required
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  className="appearance-none rounded-md relative block w-full px-3 py-2 pr-10 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                  placeholder="Password"
-                />
-                <button
-                  type="button"
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center"
-                  onClick={() => setShowPassword(!showPassword)}
-                >
-                  {showPassword ? (
-                    <EyeOff className="h-5 w-5 text-gray-400" />
-                  ) : (
-                    <Eye className="h-5 w-5 text-gray-400" />
-                  )}
-                </button>
-              </div>
 
-              <div className="flex items-center justify-between">
-                <div className="text-sm">
-                  <Link
-                    href="/auth/forgot-password"
-                    className="font-medium text-blue-600 hover:text-blue-500"
-                  >
-                    Forgot your password?
-                  </Link>
-                </div>
-              </div>
+              {!otpMode ? (
+                <form onSubmit={handleEmailSignIn} className="space-y-4">
+                  <div className="relative">
+                    <label htmlFor="password" className="sr-only">
+                      Password
+                    </label>
+                    <input
+                      id="password"
+                      name="password"
+                      type={showPassword ? 'text' : 'password'}
+                      autoComplete="current-password"
+                      required
+                      value={formData.password}
+                      onChange={handleInputChange}
+                      className="appearance-none rounded-md relative block w-full px-3 py-2 pr-10 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                      placeholder="Password"
+                    />
+                    <button
+                      type="button"
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                      onClick={() => setShowPassword(!showPassword)}
+                    >
+                      {showPassword ? (
+                        <EyeOff className="h-5 w-5 text-gray-400" />
+                      ) : (
+                        <Eye className="h-5 w-5 text-gray-400" />
+                      )}
+                    </button>
+                  </div>
 
-              <div>
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isLoading ? 'Signing in...' : 'Sign in'}
-                </button>
-              </div>
-            </form>
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm">
+                      <Link
+                        href="/auth/forgot-password"
+                        className="font-medium text-blue-600 hover:text-blue-500"
+                      >
+                        Forgot your password?
+                      </Link>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setOtpMode(true)}
+                      className="text-sm text-blue-600 hover:text-blue-500"
+                    >
+                      Use OTP instead
+                    </button>
+                  </div>
+
+                  <div>
+                    <button
+                      type="submit"
+                      disabled={isLoading}
+                      className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isLoading ? 'Signing in...' : 'Sign in'}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <form onSubmit={handleOtpSignIn} className="space-y-4">
+                  <div>
+                    <label htmlFor="otp" className="sr-only">
+                      OTP
+                    </label>
+                    <input
+                      id="otp"
+                      name="otp"
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={otp}
+                      onChange={(e) => setOtp(e.target.value)}
+                      className="appearance-none rounded-md relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                      placeholder="Enter OTP"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={sendOtp}
+                      disabled={isLoading}
+                      className="text-sm text-blue-600 hover:text-blue-500"
+                    >
+                      {otpSent ? 'Resend OTP' : 'Send OTP'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOtpMode(false)}
+                      className="text-sm text-gray-600 hover:text-gray-800"
+                    >
+                      Use password instead
+                    </button>
+                  </div>
+
+                  <div>
+                    <button
+                      type="submit"
+                      disabled={isLoading}
+                      className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isLoading ? 'Verifying...' : 'Verify & Sign in'}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
           )}
 
           {/* Wallet Sign In */}

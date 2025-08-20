@@ -23,6 +23,57 @@ cache/
 artifacts/
 typechain-types/
 
+# Monorepo subprojects
+# Frontend (Next.js)
+frontend/.next/
+frontend/out/
+frontend/.vercel/
+frontend/.turbo/
+frontend/.cache/
+frontend/.eslintcache
+frontend/.env
+frontend/.env.*
+
+# Backend (Express + Prisma)
+backend/.env
+backend/.env.*
+backend/.eslintcache
+backend/coverage/
+backend/uploads/
+backend/storage/
+backend/tmp/
+backend/temp/
+backend/prisma/*.db
+backend/prisma/dev.db
+
+# Contracts (Hardhat)
+contracts/.env
+contracts/cache/
+contracts/artifacts/
+contracts/typechain-types/
+contracts/.openzeppelin/
+
+# Additional services
+auth-service/.env
+auth-service/.env.*
+api-gateway/.env
+api-gateway/.env.*
+ai-matching-engine/.env
+ai-matching-engine/.env.*
+
+# Coverage and reports
+coverage/
+.nyc_output/
+
+# Docker
+docker-data/
+.docker/
+
+# Temp files
+.tmp/
+tmp/
+temp/
+
 # IDE
 .vscode/
 .idea/

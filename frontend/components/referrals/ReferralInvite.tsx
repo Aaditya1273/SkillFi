@@ -4,9 +4,18 @@ import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { Copy, Check } from 'lucide-react';
 
+type ReferralData = {
+  referralCode?: { referralLink: string } | null;
+  referralCount?: number;
+  referralsMade?: Array<{
+    id: string;
+    referee: { avatar?: string | null; username: string };
+  }>;
+};
+
 const ReferralInvite = () => {
   const { data: session } = useSession();
-  const [referralData, setReferralData] = useState(null);
+  const [referralData, setReferralData] = useState<ReferralData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [isCopied, setIsCopied] = useState(false);
@@ -21,8 +30,8 @@ const ReferralInvite = () => {
       }
       const data = await response.json();
       setReferralData(data);
-    } catch (err) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsLoading(false);
     }
@@ -36,9 +45,9 @@ const ReferralInvite = () => {
         throw new Error('Failed to generate code');
       }
       const data = await response.json();
-      setReferralData(prev => ({ ...prev, referralCode: data }));
-    } catch (err) {
-      setError(err.message);
+      setReferralData(prev => (prev ? { ...prev, referralCode: data } : { referralCode: data }));
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsLoading(false);
     }
@@ -58,6 +67,7 @@ const ReferralInvite = () => {
 
   if (isLoading) return <p>Loading referral info...</p>;
   if (error) return <p className="text-red-500">Error: {error}</p>;
+  const referrals = referralData?.referralsMade ?? [];
 
   return (
     <div className="p-6 bg-gray-800 rounded-lg">
@@ -87,11 +97,11 @@ const ReferralInvite = () => {
         </div>
       )}
 
-      {referralData?.referralsMade?.length > 0 && (
+      {referrals.length > 0 && (
         <div className="mt-6">
           <h3 className="font-bold">Your Referrals:</h3>
           <ul className="mt-2 space-y-2">
-            {referralData.referralsMade.map(ref => (
+            {referrals.map(ref => (
               <li key={ref.id} className="flex items-center gap-2 p-2 bg-gray-700 rounded">
                 <img src={ref.referee.avatar || '/default-avatar.png'} alt={ref.referee.username} className="w-8 h-8 rounded-full" />
                 <span>{ref.referee.username}</span>
