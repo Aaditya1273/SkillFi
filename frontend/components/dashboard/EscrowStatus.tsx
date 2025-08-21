@@ -14,13 +14,14 @@ import {
   Download,
   MessageCircle
 } from 'lucide-react';
-import { useAccount, useWriteContract } from 'wagmi';
+import { useAccount, useWalletClient } from 'wagmi';
 import { parseUnits } from 'viem';
 import { ESCROW_CONTRACT, TOKEN_CONTRACT, ESCROW_ADDRESS } from '@/lib/contracts';
 
 export function EscrowStatus() {
   const [selectedEscrow, setSelectedEscrow] = useState<number | null>(null);
   const { address } = useAccount();
+  const { data: walletClient } = useWalletClient();
 
   // On-chain form state
   const [title, setTitle] = useState('');
@@ -32,7 +33,30 @@ export function EscrowStatus() {
   const [freelancer, setFreelancer] = useState('');
   const [disputeReason, setDisputeReason] = useState('');
 
-  const { writeContract, isPending, data: txHash, error } = useWriteContract();
+  // Local tx state to emulate wagmi v2's useWriteContract result
+  const [isPending, setIsPending] = useState(false);
+  const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
+  const [error, setError] = useState<Error | null>(null);
+
+  // Helper that proxies to viem's walletClient.writeContract
+  const writeContract = async (args: Parameters<NonNullable<typeof walletClient>['writeContract']>[0]) => {
+    if (!walletClient) {
+      setError(new Error('Wallet client not available. Connect your wallet.'));
+      throw new Error('Wallet client not available');
+    }
+    try {
+      setError(null);
+      setIsPending(true);
+      const hash = await walletClient.writeContract(args);
+      setTxHash(hash);
+      return hash;
+    } catch (e) {
+      setError(e as Error);
+      throw e;
+    } finally {
+      setIsPending(false);
+    }
+  };
 
   // Mock escrow data
   const escrows = [

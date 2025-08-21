@@ -19,7 +19,7 @@ import { DAO_CONTRACT, TOKEN_CONTRACT } from '@/lib/contracts';
 
 // Optional: staking contract interaction (standard single-stake pool interface)
 const STAKING_ADDRESS = process.env.NEXT_PUBLIC_STAKING_ADDRESS as `0x${string}` | undefined;
-const DEFAULT_DECIMALS = 18n;
+const DEFAULT_DECIMALS = 18;
 const STAKING_ABI = [
   { inputs: [{ name: 'amount', type: 'uint256' }], name: 'stake', outputs: [], stateMutability: 'nonpayable', type: 'function' },
   { inputs: [{ name: 'amount', type: 'uint256' }], name: 'withdraw', outputs: [], stateMutability: 'nonpayable', type: 'function' },
@@ -70,8 +70,8 @@ export function TokenStaking() {
   });
   const tokenDecimals = useMemo(() => {
     const d = decimalsQuery.data as number | bigint | undefined;
-    if (typeof d === 'bigint') return d;
-    if (typeof d === 'number') return BigInt(d);
+    if (typeof d === 'bigint') return Number(d);
+    if (typeof d === 'number') return d;
     return DEFAULT_DECIMALS;
   }, [decimalsQuery.data]);
 

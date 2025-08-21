@@ -19,7 +19,7 @@ import {
 
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
 import { DAO_CONTRACT, TOKEN_CONTRACT } from '@/lib/contracts';
-import { formatEther } from 'viem';
+import { formatEther, getAbiItem, type Abi, type AbiEvent } from 'viem';
 
 export function GovernanceVoting() {
   const [selectedProposal, setSelectedProposal] = useState<number | null>(null);
@@ -65,20 +65,39 @@ export function GovernanceVoting() {
       try {
         setLoadingProposals(true);
         // get ProposalCreated logs
+        const proposalCreatedEvent = getAbiItem({
+          abi: DAO_CONTRACT.abi as Abi,
+          name: 'ProposalCreated',
+        }) as AbiEvent;
         const logs = await publicClient.getLogs({
           address: DAO_CONTRACT.address as `0x${string}`,
-          abi: DAO_CONTRACT.abi as any,
-          eventName: 'ProposalCreated',
+          event: proposalCreatedEvent,
           fromBlock: 0n,
           toBlock: 'latest',
         });
 
-        // Map logs to proposals
-        const base = logs.map(l => ({
-          id: (l.args?.proposalId ?? 0n) as bigint,
-          proposer: (l.args?.proposer as `0x${string}`) || undefined,
-          description: (l.args?.description as string) || undefined,
-        }));
+        // Map logs to proposals (handle both tuple and named args from viem)
+        const base = logs.map((l) => {
+          const a = l.args as Record<string, unknown> | readonly unknown[] | undefined;
+          let id: bigint = 0n;
+          let proposer: `0x${string}` | undefined = undefined;
+          let description: string | undefined = undefined;
+
+          if (Array.isArray(a)) {
+            // Many Governor ABIs emit tuple-style args: [proposalId, proposer, ... , description]
+            id = (a[0] as bigint) ?? 0n;
+            proposer = (a[1] as `0x${string}`) ?? undefined;
+            // Description is typically the last element
+            description = (a[a.length - 1] as string) ?? undefined;
+          } else if (a && typeof a === 'object') {
+            const r = a as Record<string, unknown>;
+            id = ((r.proposalId as bigint) ?? (r.id as bigint) ?? 0n);
+            proposer = (r.proposer as `0x${string}`) ?? undefined;
+            description = (r.description as string) ?? undefined;
+          }
+
+          return { id, proposer, description };
+        });
 
         // Unique by id
         const unique = Array.from(new Map(base.map(p => [p.id.toString(), p])).values());

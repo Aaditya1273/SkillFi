@@ -1,45 +1,53 @@
 'use client';
 
 import { SessionProvider } from 'next-auth/react';
-import { WagmiConfig, createConfig, configureChains } from 'wagmi';
-import { RainbowKitProvider, getDefaultWallets } from '@rainbow-me/rainbowkit';
+import { WagmiProvider, createConfig } from 'wagmi';
 import { mainnet, polygon, optimism, arbitrum } from 'wagmi/chains';
-import { publicProvider } from 'wagmi/providers/public';
-import { alchemyProvider } from 'wagmi/providers/alchemy';
-import { infuraProvider } from 'wagmi/providers/infura';
+import { http } from 'viem';
+import type { Chain } from 'viem/chains';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { RainbowKitProvider, connectorsForWallets, lightTheme } from '@rainbow-me/rainbowkit';
+import {
+  injectedWallet,
+  metaMaskWallet,
+  rainbowWallet,
+  coinbaseWallet,
+  walletConnectWallet,
+} from '@rainbow-me/rainbowkit/wallets';
 import '@rainbow-me/rainbowkit/styles.css';
 
-const providers = [] as any[];
-if (process.env.NEXT_PUBLIC_ALCHEMY_API_KEY) {
-  providers.push(alchemyProvider({ apiKey: process.env.NEXT_PUBLIC_ALCHEMY_API_KEY }));
-}
-if (process.env.NEXT_PUBLIC_INFURA_API_KEY) {
-  providers.push(infuraProvider({ apiKey: process.env.NEXT_PUBLIC_INFURA_API_KEY }));
-}
-providers.push(publicProvider());
+const projectId = process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID!;
 
-const { chains, publicClient } = configureChains(
-  [mainnet, polygon, optimism, arbitrum],
-  providers
-);
+// Define chains once to reuse across config and wallets
+const chains = [mainnet, polygon, optimism, arbitrum] as const satisfies readonly [Chain, ...Chain[]];
 
-const projectId = process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID;
-
-if (!projectId) {
-  throw new Error('WalletConnect projectId is not defined. Please check your .env.local file.');
-}
-
-const { connectors } = getDefaultWallets({
+// RainbowKit v2: pass wallet factory functions in `wallets` and provide shared options
+// (appName, projectId, chains) via the second argument.
+const connectors = connectorsForWallets([
+  {
+    groupName: 'Popular',
+    wallets: [
+      injectedWallet,
+      metaMaskWallet,
+      rainbowWallet,
+      coinbaseWallet,
+      walletConnectWallet,
+    ],
+  },
+], {
   appName: 'SkillFi',
   projectId,
-  chains,
 });
 
-const wagmiConfig = createConfig({
-  autoConnect: true,
+export const config = createConfig({
+  chains,
   connectors,
-  publicClient,
+  transports: {
+    [mainnet.id]: http(),
+    [polygon.id]: http(),
+    [optimism.id]: http(),
+    [arbitrum.id]: http(),
+  },
 });
 
 const queryClient = new QueryClient();
@@ -47,13 +55,23 @@ const queryClient = new QueryClient();
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <SessionProvider>
-      <WagmiConfig config={wagmiConfig}>
-        <RainbowKitProvider chains={chains}>
-          <QueryClientProvider client={queryClient}>
+      <WagmiProvider config={config}>
+        <QueryClientProvider client={queryClient}>
+          <RainbowKitProvider
+            theme={lightTheme({
+              // Purple accent to match the bird shade
+              // Adjust if you have an exact hex from your design system
+              accentColor: '#7C4DFF',
+              accentColorForeground: 'white',
+              borderRadius: 'large',
+              fontStack: 'rounded',
+              overlayBlur: 'small',
+            })}
+          >
             {children}
-          </QueryClientProvider>
-        </RainbowKitProvider>
-      </WagmiConfig>
+          </RainbowKitProvider>
+        </QueryClientProvider>
+      </WagmiProvider>
     </SessionProvider>
   );
 }
