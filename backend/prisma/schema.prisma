@@ -26,6 +26,7 @@ model User {
   password    String?
   emailVerified Boolean @default(false)
   walletConnectedAt DateTime?
+  userType    String   @default("jobSeeker") // jobSeeker or jobProvider
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

@@ -13,6 +13,7 @@ declare module "next-auth" {
       firstName?: string;
       lastName?: string;
       provider?: string;
+      userType?: 'jobSeeker' | 'jobProvider';
     };
   }
 
@@ -26,6 +27,7 @@ declare module "next-auth" {
     firstName?: string;
     lastName?: string;
     provider?: string;
+    userType?: 'jobSeeker' | 'jobProvider';
   }
 }
 
@@ -36,5 +38,6 @@ declare module "next-auth/jwt" {
     firstName?: string;
     lastName?: string;
     provider?: string;
+    userType?: 'jobSeeker' | 'jobProvider';
   }
 }

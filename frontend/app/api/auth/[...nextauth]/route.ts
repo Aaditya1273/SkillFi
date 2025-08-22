@@ -145,6 +145,7 @@ export const authOptions: NextAuthOptions = {
             walletAddress: data.user.walletAddress,
             firstName: data.user.firstName,
             lastName: data.user.lastName,
+            userType: data.user.userType,
             image: data.user.avatar
           };
         } catch (error) {
@@ -211,6 +212,7 @@ export const authOptions: NextAuthOptions = {
             user.id = data.user.id;
             user.username = data.user.username;
             user.walletAddress = data.user.walletAddress;
+            user.userType = data.user.userType;
           }
         } catch (error) {
           console.error('Social login linking error:', error);
@@ -225,6 +227,7 @@ export const authOptions: NextAuthOptions = {
         token.walletAddress = user.walletAddress;
         token.firstName = user.firstName;
         token.lastName = user.lastName;
+        token.userType = user.userType;
       }
       
       if (account) {
@@ -241,6 +244,7 @@ export const authOptions: NextAuthOptions = {
         session.user.walletAddress = token.walletAddress;
         session.user.firstName = token.firstName;
         session.user.lastName = token.lastName;
+        session.user.userType = token.userType;
         session.user.provider = token.provider;
       }
       return session;

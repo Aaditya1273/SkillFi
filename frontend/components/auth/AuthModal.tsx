@@ -23,7 +23,8 @@ export function AuthModal({ isOpen, onClose, defaultTab = 'signin' }: AuthModalP
     username: '',
     firstName: '',
     lastName: '',
-    confirmPassword: ''
+    confirmPassword: '',
+    userType: ''
   });
 
   const { data: session } = useSession();
@@ -67,7 +68,8 @@ export function AuthModal({ isOpen, onClose, defaultTab = 'signin' }: AuthModalP
             password: formData.password,
             username: formData.username,
             firstName: formData.firstName,
-            lastName: formData.lastName
+            lastName: formData.lastName,
+            userType: formData.userType
           })
         });
 
@@ -292,15 +294,46 @@ export function AuthModal({ isOpen, onClose, defaultTab = 'signin' }: AuthModalP
             className="w-full border border-gray-300 rounded-lg px-3 py-2"
           />
           {activeTab === 'signup' && (
-            <input
-              type="password"
-              name="confirmPassword"
-              placeholder="Confirm Password"
-              value={formData.confirmPassword}
-              onChange={handleInputChange}
-              required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2"
-            />
+            <>
+              <input
+                type="password"
+                name="confirmPassword"
+                placeholder="Confirm Password"
+                value={formData.confirmPassword}
+                onChange={handleInputChange}
+                required
+                className="w-full border border-gray-300 rounded-lg px-3 py-2"
+              />
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">I am a:</label>
+                <div className="grid grid-cols-2 gap-4">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="userType"
+                      value="jobSeeker"
+                      checked={formData.userType === 'jobSeeker'}
+                      onChange={handleInputChange}
+                      required
+                      className="mr-2"
+                    />
+                    <span className="text-sm">Job Seeker</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="userType"
+                      value="jobProvider"
+                      checked={formData.userType === 'jobProvider'}
+                      onChange={handleInputChange}
+                      required
+                      className="mr-2"
+                    />
+                    <span className="text-sm">Job Provider</span>
+                  </label>
+                </div>
+              </div>
+            </>
           )}
           <button
             type="submit"

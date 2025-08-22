@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useSession } from 'next-auth/react';
-import { Search, Menu, X, Home, Users, Briefcase, MessageSquare, Bell, Grid3x3 } from 'lucide-react';
+import { Search, Menu, X, Home, Users, Briefcase, MessageSquare, Bell, Grid3x3, User, FileText, DollarSign, Settings } from 'lucide-react';
 import { useState } from 'react';
 import { useAccount } from 'wagmi';
 import Image from 'next/image';
@@ -20,6 +20,7 @@ export function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const isAuthed = Boolean(session) || isConnected;
   const displayName = (session?.user as any)?.name || (session?.user as any)?.email || (address ? shorten(address) : 'Profile');
+  const userType = session?.user?.userType || 'jobSeeker';
 
   return (
     <nav className="bg-white shadow-sm border-b">
@@ -42,20 +43,45 @@ export function Navbar() {
               </div>
             </div>
 
-            {/* Center: Icon tabs */}
+            {/* Center: Role-based Icon tabs */}
             <div className="hidden md:flex items-end gap-8 mx-auto">
               <Link href="/dashboard" className="flex flex-col items-center text-gray-600 hover:text-primary-600">
                 <Home className="w-5 h-5" />
                 <span className="text-xs mt-1">Home</span>
               </Link>
-              <Link href="/network" className="flex flex-col items-center text-gray-600 hover:text-primary-600">
-                <Users className="w-5 h-5" />
-                <span className="text-xs mt-1">Network</span>
-              </Link>
-              <Link href="/projects" className="flex flex-col items-center text-gray-600 hover:text-primary-600">
-                <Briefcase className="w-5 h-5" />
-                <span className="text-xs mt-1">Jobs</span>
-              </Link>
+              
+              {userType === 'jobSeeker' ? (
+                <>
+                  <Link href="/jobs" className="flex flex-col items-center text-gray-600 hover:text-primary-600">
+                    <Briefcase className="w-5 h-5" />
+                    <span className="text-xs mt-1">Find Jobs</span>
+                  </Link>
+                  <Link href="/applications" className="flex flex-col items-center text-gray-600 hover:text-primary-600">
+                    <FileText className="w-5 h-5" />
+                    <span className="text-xs mt-1">Applications</span>
+                  </Link>
+                  <Link href="/skills" className="flex flex-col items-center text-gray-600 hover:text-primary-600">
+                    <User className="w-5 h-5" />
+                    <span className="text-xs mt-1">Skills</span>
+                  </Link>
+                </>
+              ) : (
+                <>
+                  <Link href="/my-jobs" className="flex flex-col items-center text-gray-600 hover:text-primary-600">
+                    <Briefcase className="w-5 h-5" />
+                    <span className="text-xs mt-1">My Jobs</span>
+                  </Link>
+                  <Link href="/post-job" className="flex flex-col items-center text-gray-600 hover:text-primary-600">
+                    <FileText className="w-5 h-5" />
+                    <span className="text-xs mt-1">Post Job</span>
+                  </Link>
+                  <Link href="/team" className="flex flex-col items-center text-gray-600 hover:text-primary-600">
+                    <Users className="w-5 h-5" />
+                    <span className="text-xs mt-1">Team</span>
+                  </Link>
+                </>
+              )}
+              
               <Link href="/messages" className="flex flex-col items-center text-gray-600 hover:text-primary-600">
                 <MessageSquare className="w-5 h-5" />
                 <span className="text-xs mt-1">Messages</span>
@@ -65,9 +91,9 @@ export function Navbar() {
                 <span className="text-xs mt-1">Notifications</span>
               </Link>
               <div className="w-px h-6 bg-gray-200" />
-              <Link href="/apps" className="flex flex-col items-center text-gray-600 hover:text-primary-600">
-                <Grid3x3 className="w-5 h-5" />
-                <span className="text-xs mt-1">Apps</span>
+              <Link href="/earnings" className="flex flex-col items-center text-gray-600 hover:text-primary-600">
+                <DollarSign className="w-5 h-5" />
+                <span className="text-xs mt-1">Earnings</span>
               </Link>
             </div>
 

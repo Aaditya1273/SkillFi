@@ -15,7 +15,8 @@ router.post('/register',
     body('username').trim().isLength({ min: 3, max: 30 }).matches(/^[a-zA-Z0-9_]+$/),
     body('password').isLength({ min: 6 }),
     body('firstName').optional().trim().isLength({ min: 1, max: 50 }),
-    body('lastName').optional().trim().isLength({ min: 1, max: 50 })
+    body('lastName').optional().trim().isLength({ min: 1, max: 50 }),
+    body('userType').isIn(['jobSeeker', 'jobProvider'])
   ],
   async (req, res) => {
     try {
@@ -24,7 +25,7 @@ router.post('/register',
         return res.status(400).json({ errors: errors.array() });
       }
 
-      const { email, username, password, firstName, lastName } = req.body;
+      const { email, username, password, firstName, lastName, userType } = req.body;
 
       // Check if user already exists
       const existingUser = await prisma.user.findFirst({
@@ -52,7 +53,8 @@ router.post('/register',
           username,
           password: hashedPassword,
           firstName,
-          lastName
+          lastName,
+          userType: userType || 'jobSeeker'
         },
         select: {
           id: true,
@@ -60,6 +62,7 @@ router.post('/register',
           username: true,
           firstName: true,
           lastName: true,
+          userType: true,
           createdAt: true
         }
       });
@@ -204,6 +207,7 @@ router.get('/me', auth, async (req, res) => {
         isVerified: true,
         reputation: true,
         totalEarned: true,
+        userType: true,
         createdAt: true
       }
     });

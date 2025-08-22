@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { email, password, username, firstName, lastName, referralCode } = body;
+    const { email, password, username, firstName, lastName, userType, referralCode } = body;
 
     if (!email || !password || !username || !firstName || !lastName) {
       return NextResponse.json({ error: 'All fields are required' }, { status: 400 });

@@ -22,6 +22,8 @@ import { TokenStaking } from '@/components/dashboard/TokenStaking';
 import ReferralInvite from '@/components/referrals/ReferralInvite';
 import Leaderboard from '@/components/referrals/Leaderboard';
 import { GovernanceVoting } from '@/components/dashboard/GovernanceVoting';
+import { JobSeekerDashboard } from '@/components/dashboard/JobSeekerDashboard';
+import { JobProviderDashboard } from '@/components/dashboard/JobProviderDashboard';
 
 type TabType = 'jobs' | 'applications' | 'escrow' | 'staking' | 'governance';
 
@@ -54,6 +56,17 @@ export default function Dashboard() {
         </div>
       </div>
     );
+  }
+
+  // Role-based dashboard rendering
+  const userType = session.user?.userType || 'jobSeeker'; // Default to job seeker if not set
+
+  if (userType === 'jobSeeker') {
+    return <JobSeekerDashboard user={session.user} />;
+  }
+
+  if (userType === 'jobProvider') {
+    return <JobProviderDashboard user={session.user} />;
   }
 
   return (
