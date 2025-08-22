@@ -1,4 +1,4 @@
-# SkillFi - Web3 Freelance Marketplace
+# SkillFi - Web3 Freelance Marketplace:
 
 A decentralized freelance marketplace built with Next.js, Solidity, and PostgreSQL.
 
