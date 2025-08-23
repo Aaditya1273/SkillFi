@@ -1,6 +1,31 @@
-# SkillFi - Web3 Freelance Marketplace:
+# SkillFi – Web3 Freelance Marketplace ✨
 
-A decentralized freelance marketplace built with Next.js, Solidity, and PostgreSQL.
+> A decentralized freelance marketplace built with Next.js, Solidity, and PostgreSQL.
+
+![CI](https://img.shields.io/badge/CI-GitHub_Actions-success?style=flat-square)
+![Next.js](https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js)
+![Solidity](https://img.shields.io/badge/Solidity-smart%20contracts-363636?style=flat-square&logo=solidity)
+![Prisma](https://img.shields.io/badge/Prisma-ORM-2D3748?style=flat-square&logo=prisma)
+![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
+
+SkillFi connects clients and Web3 talent with on-chain escrow, DAO‑based dispute resolution, and AI matching — secure, transparent, and community‑owned. 🚀
+
+---
+
+## Table of Contents
+
+- [Why SkillFi?](#why-skillfi-realworld-problems-we-solve)
+- [How it works](#how-it-works-at-a-glance)
+- [Architecture](#architecture-high-level)
+- [Flowchart](#flowchart-end-to-end-overview)
+- [Features](#features)
+- [Tech Stack](#tech-stack)
+- [Quick Start](#quick-start)
+- [Project Structure](#project-structure)
+- [Smart Contracts](#smart-contracts)
+- [API Endpoints](#api-endpoints)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Why SkillFi? (Real‑world problems we solve)
 
@@ -26,6 +51,41 @@ A decentralized freelance marketplace built with Next.js, Solidity, and PostgreS
   - Wallet + Web2 (email/social) via NextAuth + SIWE, RainbowKit/Wagmi providers
 - **AI matching**
   - Service scaffold: `ai-matching-engine/`
+
+## Architecture (high-level)
+
+```mermaid
+flowchart TB
+  subgraph Frontend [Next.js Frontend]
+    UI[Pages & Components]
+    Auth[NextAuth + SIWE]
+    Wagmi[Wagmi + RainbowKit]
+  end
+
+  subgraph Backend [Node/Express API]
+    API[REST/GraphQL]
+    Prisma[(PostgreSQL via Prisma)]
+    Cache[(Redis)]
+  end
+
+  subgraph Chain [EVM Network]
+    Escrow[Escrow Contracts]
+    Governor[Governor / DAO]
+  end
+
+  subgraph AI [AI Matching Engine]
+    MatchSvc[Matching Service]
+  end
+
+  UI --> Auth
+  UI --> Wagmi
+  UI --> API
+  API --> Prisma
+  API --> Cache
+  Wagmi --> Escrow
+  Wagmi --> Governor
+  API --> MatchSvc
+```
 
 ## Similar to (but Web3‑native)
 
@@ -56,6 +116,7 @@ flowchart LR
 - 💼 Project posting and bidding system
 - 💰 Escrow smart contracts for secure payments
 - 📊 Reputation system on-chain
+- 🤖 AI-based talent matching
 - 🔍 Advanced search and filtering
 - 💬 Real-time messaging
 - 📱 Responsive design with Tailwind CSS
@@ -96,15 +157,18 @@ flowchart LR
    npm run dev
    ```
 
+> Tip: Use two terminals for DX — one for the frontend and one for backend/contract tasks.
+
 ## Project Structure
 
 ```
 SkillFi/
-├── frontend/          # Next.js application
-├── backend/           # Express API server
-├── contracts/         # Solidity smart contracts
-├── database/          # Database migrations and seeds
-└── docs/             # Documentation
+├── frontend/              # Next.js application (NextAuth, Wagmi/RainbowKit)
+├── backend/               # Express API server (Prisma, Redis)
+├── contracts/             # Solidity smart contracts (Hardhat)
+├── ai-matching-engine/    # AI services for matching
+├── database/              # Prisma schema, migrations, seeds
+└── docs/                  # Additional docs
 ```
 
 ## Smart Contracts
@@ -122,10 +186,14 @@ SkillFi/
 
 ## Contributing
 
+We welcome contributions! 🙌
+
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+2. Create a feature branch: `git checkout -b feat/awesome-thing`
+3. Commit with conventional commits: `feat(ui): add settings sidebar`
+4. Open a PR describing the change, screenshots, and tests
+
+> Run `npm run lint` and `npm run typecheck` before pushing.
 
 ## License
 
