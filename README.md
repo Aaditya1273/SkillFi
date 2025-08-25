@@ -8,7 +8,8 @@
 ![Prisma](https://img.shields.io/badge/Prisma-ORM-2D3748?style=flat-square&logo=prisma)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
-SkillFi connects clients and Web3 talent with on-chain escrow, DAO‑based dispute resolution, and AI matching — secure, transparent, and community‑owned. 🚀.
+SkillFi connects clients and Web3 talent with on-chain escrow, DAO‑based dispute resolution, and AI matching — secure, transparent, and community‑owned. 🚀
+
 
 ---
 
